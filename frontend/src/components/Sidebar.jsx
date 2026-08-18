@@ -11,6 +11,7 @@ const navItems = [
   { to: "/orders",        icon: Package,         label: "Orders" },
   { to: "/orders/new",    icon: PlusCircle,      label: "New Order" },
   { to: "/subscriptions", icon: Calendar,        label: "Subscriptions" },
+  { to: "/customers",     icon: BookUser,        label: "Address Book" },
   { to: "/inventory",     icon: Boxes,           label: "Inventory" },
   { to: "/picklist",      icon: ClipboardList,   label: "Pick List" },
   { to: "/scan",          icon: QrCode,          label: "Scan QR" },

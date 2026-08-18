@@ -82,12 +82,63 @@ def get_by_source(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    sources = ["website", "whatsapp", "phone", "walk_in"]
-    result = []
-    for s in sources:
-        count = db.query(func.count(models.Order.id)).filter(models.Order.source == s).scalar() or 0
-        result.append({"source": s, "count": count})
-    return result
+    """Order count and revenue breakdown by order source."""
+    results = (
+        db.query(
+            models.Order.source,
+            func.count(models.Order.id).label("count"),
+            func.sum(models.Order.total_amount).label("total_revenue"),
+            func.sum(func.case((models.Order.status == "delivered", 1), else_=0)).label("delivered_count")
+        )
+        .group_by(models.Order.source)
+        .all()
+    )
+    total_all = sum(r.count for r in results) or 1
+    res = []
+    for r in results:
+        src = r.source or "unknown"
+        res.append({
+            "source": src,
+            "count": r.count,
+            "total_revenue": float(r.total_revenue or 0.0),
+            "delivered_count": int(r.delivered_count or 0),
+            "percentage": round((r.count / total_all) * 100, 1),
+        })
+    return res
+
+
+@router.get("/rider-performance")
+def get_rider_performance(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Detailed order dispatch and cash collection metrics per rider."""
+    results = (
+        db.query(
+            models.Order.assigned_rider_name,
+            func.count(models.Order.id).label("total_orders"),
+            func.sum(func.case((models.Order.status == "delivered", 1), else_=0)).label("delivered_count"),
+            func.sum(func.case((models.Order.status == "out_for_delivery", 1), else_=0)).label("out_for_delivery_count"),
+            func.sum(func.case((models.Order.status == "delivered", models.Order.total_amount), else_=0.0)).label("cod_collected"),
+        )
+        .filter(models.Order.assigned_rider_name.isnot(None), models.Order.assigned_rider_name != "")
+        .group_by(models.Order.assigned_rider_name)
+        .all()
+    )
+    
+    res = []
+    for r in results:
+        tot = r.total_orders or 0
+        deliv = int(r.delivered_count or 0)
+        res.append({
+            "rider_name": r.assigned_rider_name,
+            "total_orders": tot,
+            "delivered_orders": deliv,
+            "out_for_delivery_orders": int(r.out_for_delivery_count or 0),
+            "total_cod_collected": float(r.cod_collected or 0.0),
+            "success_rate": round((deliv / tot) * 100, 1) if tot > 0 else 0.0
+        })
+    return res
 
 
 @router.get("/staff-performance")

@@ -27,6 +27,8 @@ export default function Inventory() {
   // Spoilage / Broken Stock state
   const [spoilProduct, setSpoilProduct] = useState(null);
   const [spoilQty, setSpoilQty] = useState(1);
+  const [spoilAction, setSpoilAction] = useState("discarded");
+  const [spoilOrderNum, setSpoilOrderNum] = useState("");
   const [spoilNote, setSpoilNote] = useState("");
 
   // New Product Modal state
@@ -117,11 +119,15 @@ export default function Inventory() {
     try {
       await api.post(`/api/inventory/products/${spoilProduct.id}/spoilage`, {
         quantity: parseFloat(spoilQty),
-        note: spoilNote || `Spoiled/broken stock reported: ${spoilQty} ${spoilProduct.unit}s`,
+        action: spoilAction,
+        order_number: spoilOrderNum || null,
+        note: spoilNote || null,
       });
-      showStatus(`Spoilage reported! ${spoilQty} ${spoilProduct.unit}s removed from inventory.`, "success");
+      showStatus(`Spoilage logged (${spoilAction})! ${spoilQty} ${spoilProduct.unit}s updated.`, "success");
       setSpoilProduct(null);
       setSpoilQty(1);
+      setSpoilAction("discarded");
+      setSpoilOrderNum("");
       setSpoilNote("");
       fetchData();
     } catch (err) {
@@ -158,14 +164,14 @@ export default function Inventory() {
 
   // CSV handlers
   const handleClearProducts = async () => {
-    if (!window.confirm("⚠️ DANGER: This will delete ALL product catalog items and stock movements. Are you sure?")) return;
+    if (!window.confirm("DANGER: This will delete ALL product catalog items and stock movements. Are you sure?")) return;
     setCsvLoading(true);
     try {
       const { data } = await api.delete("/api/data/clear-products");
-      showStatus(`✅ ${data.message}`, "success");
+      showStatus(data.message, "success");
       fetchData();
     } catch (err) {
-      showStatus(`❌ ${err.response?.data?.detail || "Failed to clear products"}`, "error");
+      showStatus(err.response?.data?.detail || "Failed to clear products", "error");
     } finally {
       setCsvLoading(false);
     }
@@ -186,15 +192,26 @@ export default function Inventory() {
       const { data } = await api.post("/api/data/import/products", formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
-      showStatus(`✅ ${data.message}`, "success");
+      showStatus(data.message, "success");
       if (data.errors?.length > 0) {
         setImportErrors(data.errors);
       }
       fetchData();
     } catch (err) {
-      showStatus(`❌ ${err.response?.data?.detail || "Import failed"}`, "error");
+      showStatus(err.response?.data?.detail || "Import failed", "error");
     } finally {
       setCsvLoading(false);
+    }
+  };
+
+  const handleDeleteProduct = async (prodId, prodName) => {
+    if (!window.confirm(`Are you sure you want to remove '${prodName}' from the inventory catalog?`)) return;
+    try {
+      await api.delete(`/api/inventory/products/${prodId}`);
+      showStatus(`Product '${prodName}' removed successfully.`, "success");
+      fetchData();
+    } catch (err) {
+      showStatus(err.response?.data?.detail || "Failed to delete product", "error");
     }
   };
 
@@ -450,7 +467,7 @@ export default function Inventory() {
                               className="btn-secondary text-xs px-2.5 py-1 border-red-900/40 text-red-400 hover:bg-red-950/20"
                               title="Report spoiled or broken stock"
                             >
-                              💔 Spoilage
+                              Spoilage
                             </button>
                             {!p.base_product_id && (
                               <button
@@ -458,9 +475,16 @@ export default function Inventory() {
                                 className="btn-secondary text-xs px-2.5 py-1 border-amber-800/40 text-amber-400 hover:bg-amber-950/20"
                                 title="Set exact stock value (fix wrong totals)"
                               >
-                                ✏ Correct
+                                Correct
                               </button>
                             )}
+                            <button
+                              onClick={() => handleDeleteProduct(p.id, p.name)}
+                              className="btn-secondary text-xs px-2.5 py-1 border-red-950 text-red-400 hover:bg-red-950/30 flex items-center justify-center gap-1"
+                              title="Delete or deactivate this product"
+                            >
+                              <Trash2 className="w-3 h-3" /> Remove
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -557,7 +581,7 @@ export default function Inventory() {
         <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
           <div className="card w-full max-w-md space-y-4 bg-surface-900 border-amber-900/30 border">
             <div>
-              <h2 className="text-lg font-bold text-white">✏ Correct Stock — {correctProduct.name}</h2>
+              <h2 className="text-lg font-bold text-white">Correct Stock — {correctProduct.name}</h2>
               <p className="text-xs text-amber-400 mt-1">
                 Sets stock to an <strong>exact value</strong>. Use this to fix doubled or wrong totals.
               </p>
@@ -615,7 +639,7 @@ export default function Inventory() {
         <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
           <div className="card w-full max-w-md space-y-4 bg-surface-900 border-red-900/40 border">
             <div>
-              <h2 className="text-lg font-bold text-white">💔 Report Spoilage — {spoilProduct.name}</h2>
+              <h2 className="text-lg font-bold text-white">Report Spoilage — {spoilProduct.name}</h2>
               <p className="text-xs text-red-400 mt-1">
                 Deducts spoiled or broken units from stock and recalculates all available packs.
               </p>
@@ -639,11 +663,39 @@ export default function Inventory() {
               </div>
 
               <div>
-                <label className="label">Inspection Note / Reason</label>
+                <label className="label">Action Taken / Stock Disposition</label>
+                <select
+                  className="select border-red-800/40"
+                  value={spoilAction}
+                  onChange={(e) => setSpoilAction(e.target.value)}
+                >
+                  <option value="discarded">Discarded / Dumped (Waste Loss)</option>
+                  <option value="sent_in_order">Sent in Customer Order (Repurposed / Sent Broken)</option>
+                  <option value="staff_use">Staff / Internal Usage</option>
+                  <option value="returned_to_supplier">Returned to Supplier</option>
+                  <option value="other">Other Action</option>
+                </select>
+              </div>
+
+              {spoilAction === "sent_in_order" && (
+                <div>
+                  <label className="label text-amber-400 font-semibold">Associated Order # (Optional)</label>
+                  <input
+                    type="text"
+                    className="input border-amber-800/40"
+                    placeholder="e.g. ORD-1004"
+                    value={spoilOrderNum}
+                    onChange={(e) => setSpoilOrderNum(e.target.value)}
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="label">Inspection Note / Details</label>
                 <input
                   type="text"
                   className="input"
-                  placeholder="e.g. 50 eggs broken during delivery shipment"
+                  placeholder="e.g. 50 eggs damaged during shipment transport"
                   value={spoilNote}
                   onChange={(e) => setSpoilNote(e.target.value)}
                 />
@@ -706,7 +758,7 @@ export default function Inventory() {
 
               {!newProd.base_product_id && (
                 <div className="bg-surface-850 p-3 rounded-xl border border-surface-800 space-y-2">
-                  <p className="text-xs font-semibold text-brand-400">💡 Purchase Cost Calculator (Optional)</p>
+                  <p className="text-xs font-semibold text-brand-400">Purchase Cost Calculator (Optional)</p>
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     <div>
                       <label className="text-[11px] text-brand-500">Total Purchase (PKR)</label>

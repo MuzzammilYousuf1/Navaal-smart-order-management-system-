@@ -27,6 +27,7 @@ export default function Reports() {
   const [byStatus, setByStatus] = useState([]);
   const [bySource, setBySource] = useState([]);
   const [staff, setStaff] = useState([]);
+  const [riderPerf, setRiderPerf] = useState([]);
   const [sla, setSla] = useState(null);
   const [days, setDays] = useState(7);
   const [inventoryPerf, setInventoryPerf] = useState([]);
@@ -40,18 +41,20 @@ export default function Reports() {
   const fetchAll = async () => {
     setLoading(true);
     try {
-      const [ov, bs, bsrc, st, s, ip] = await Promise.all([
+      const [ov, bs, bsrc, st, rp, s, ip] = await Promise.all([
         api.get(`/api/reports/overview?days=${days}`),
         api.get("/api/reports/by-status"),
         api.get("/api/reports/by-source"),
         api.get("/api/reports/staff-performance"),
+        api.get("/api/reports/rider-performance"),
         api.get("/api/reports/sla-summary"),
         api.get("/api/reports/inventory-performance"),
       ]);
       setOverview(ov.data);
       setByStatus(bs.data.map((d) => ({ ...d, name: d.status.replace(/_/g, " ") })));
-      setBySource(bsrc.data.map((d) => ({ ...d, name: d.source.replace(/_/g, " ") })));
+      setBySource(bsrc.data.map((d) => ({ ...d, name: (d.source || "unknown").replace(/_/g, " ").toUpperCase() })));
       setStaff(st.data);
+      setRiderPerf(rp.data);
       setSla(s.data);
       setInventoryPerf(ip.data);
     } catch (err) {
@@ -374,9 +377,88 @@ export default function Reports() {
             </div>
           </div>
 
+          {/* Detailed Order Source & Rider Tracking Grid */}
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 no-print">
+            {/* Orders by Source Table */}
+            <div className="card">
+              <h2 className="text-sm font-semibold text-brand-400 uppercase tracking-wider mb-4">
+                Orders Received by Source Channel
+              </h2>
+              <div className="table-wrap">
+                <table className="table">
+                  <thead className="thead">
+                    <tr>
+                      <th className="th">Source Channel</th>
+                      <th className="th">Total Orders</th>
+                      <th className="th">Delivered</th>
+                      <th className="th">Share (%)</th>
+                      <th className="th">Channel Revenue</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bySource.map((s) => (
+                      <tr key={s.source} className="tr-hover">
+                        <td className="td font-medium text-white uppercase">{s.source}</td>
+                        <td className="td text-brand-300 font-bold">{s.count}</td>
+                        <td className="td text-emerald-400">{s.delivered_count || s.count}</td>
+                        <td className="td text-brand-400 font-semibold">{s.percentage ? `${s.percentage}%` : "—"}</td>
+                        <td className="td font-semibold text-brand-300">
+                          PKR {(s.total_revenue || 0).toLocaleString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Per-Order Rider Dispatch & Cash Collection Table */}
+            <div className="card">
+              <h2 className="text-sm font-semibold text-brand-400 uppercase tracking-wider mb-4">
+                Per-Order Rider Dispatch & Cash Collection
+              </h2>
+              <div className="table-wrap">
+                <table className="table">
+                  <thead className="thead">
+                    <tr>
+                      <th className="th">Rider Name</th>
+                      <th className="th">Assigned Orders</th>
+                      <th className="th">Out for Delivery</th>
+                      <th className="th">Delivered</th>
+                      <th className="th">COD Cash Collected</th>
+                      <th className="th">Success %</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {riderPerf.length === 0 ? (
+                      <tr><td colSpan={6} className="td text-center text-brand-600">No rider activity recorded yet</td></tr>
+                    ) : (
+                      riderPerf.map((r) => (
+                        <tr key={r.rider_name} className="tr-hover">
+                          <td className="td font-bold text-white">{r.rider_name}</td>
+                          <td className="td text-brand-300">{r.total_orders}</td>
+                          <td className="td text-amber-400">{r.out_for_delivery_orders}</td>
+                          <td className="td text-emerald-400 font-bold">{r.delivered_orders}</td>
+                          <td className="td font-bold text-emerald-300">
+                            PKR {r.total_cod_collected.toLocaleString()}
+                          </td>
+                          <td className="td">
+                            <span className={`font-bold ${r.success_rate >= 80 ? "text-emerald-400" : "text-amber-400"}`}>
+                              {r.success_rate}%
+                            </span>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
           {/* Staff Performance */}
           <div className="card no-print">
-            <h2 className="text-sm font-semibold text-brand-400 uppercase tracking-wider mb-4">Staff Performance</h2>
+            <h2 className="text-sm font-semibold text-brand-400 uppercase tracking-wider mb-4">Staff Operations Performance</h2>
             <div className="table-wrap">
               <table className="table">
                 <thead className="thead">

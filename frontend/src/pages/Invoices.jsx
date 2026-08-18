@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
-import { FileText, Download, Printer, Clock, CheckCircle } from "lucide-react";
+import { FileText, Download, Printer, Clock, CheckCircle, Truck } from "lucide-react";
 import api, { API_BASE } from "../api/client";
+import RiderGatePassModal from "../components/RiderGatePassModal";
 
 export default function Invoices() {
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [showGatePassModal, setShowGatePassModal] = useState(false);
 
   const fetchInvoices = async () => {
     setLoading(true);
@@ -42,11 +44,19 @@ export default function Invoices() {
         <div>
           <h1 className="text-2xl font-bold text-white flex items-center gap-2">
             <FileText className="w-6 h-6 text-emerald-400" />
-            PDF Invoices & Delivery Receipts
+            PDF Invoices & Rider Gate Passes
           </h1>
           <p className="text-brand-500 text-sm mt-0.5">
-            Download branded A4 PDF invoices & print 80mm thermal receipts with delivery time breakdowns
+            Download branded A4 PDF invoices, 80mm thermal receipts, and printable Rider Gate Passes
           </p>
+        </div>
+        <div>
+          <button
+            onClick={() => setShowGatePassModal(true)}
+            className="btn-primary text-xs flex items-center gap-1.5 py-2 px-3 bg-emerald-600 hover:bg-emerald-500"
+          >
+            <Truck className="w-4 h-4" /> Print Rider Gate Pass
+          </button>
         </div>
       </div>
 
@@ -117,6 +127,13 @@ export default function Invoices() {
           </table>
         </div>
       </div>
+
+      {/* Rider Gate Pass Modal */}
+      <RiderGatePassModal
+        isOpen={showGatePassModal}
+        onClose={() => setShowGatePassModal(false)}
+        onDispatchSuccess={fetchInvoices}
+      />
     </div>
   );
 }

@@ -70,6 +70,11 @@ class Order(Base):
     sla_manager_sent = Column(Boolean, default=False)  # At 75-min mark
     sla_owner_sent = Column(Boolean, default=False)    # At 90-min mark
 
+    # Rider / Dispatch meta
+    gate_pass_no = Column(String, nullable=True)
+    gate_pass_printed_at = Column(DateTime, nullable=True)
+    is_restocked = Column(Boolean, default=False) # True if inventory was refunded/returned on cancellation/RTS return
+
     # Relationships
     items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
     status_history = relationship("StatusHistory", back_populates="order", cascade="all, delete-orphan")
@@ -252,5 +257,23 @@ class Task(Base):
     requires_report = Column(Boolean, default=False) # Whether task needs a form report
 
     assigned_to = relationship("User", foreign_keys=[assigned_to_id])
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    sender_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    sender_name = Column(String, nullable=False)
+    sender_role = Column(String, nullable=True)
+    task_id = Column(Integer, ForeignKey("tasks.id"), nullable=True)
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=True)
+    message = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    is_system_msg = Column(Boolean, default=False)
+
+    sender = relationship("User")
+    task = relationship("Task")
+    order = relationship("Order")
 
 

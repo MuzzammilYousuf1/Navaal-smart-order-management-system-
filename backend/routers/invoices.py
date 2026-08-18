@@ -60,12 +60,12 @@ GRAY_TEXT = colors.HexColor("#6b7280")
 DARK_TEXT = colors.HexColor("#111827")
 
 COMPANY = {
-    "name": "Navaal Organic Foods",
+    "name": "Navaal Foods",
     "tagline": "Pure. Natural. Organic.",
-    "address": "Lahore, Punjab, Pakistan",
-    "phone": "+92-300-0000000",
-    "email": "info@navaalorganic.pk",
-    "website": "www.navaalorganic.pk",
+    "address": "Karima view, Jamshed Quarters, Near Banori Town Masjid, Karachi, Sindh 75300, Pakistan",
+    "phone": "+92 322 2416033",
+    "email": "info@navaalfoods.com",
+    "website": "www.navaalfoods.com",
 }
 
 
@@ -170,6 +170,133 @@ def scan_order_qr(
     }
 
 
+# ─── Gate Pass PDF Generator ──────────────────────────────────────────────────
+
+@router.get("/gate-pass/pdf")
+def download_gate_pass_pdf(
+    rider_name: str,
+    order_ids: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_user_via_token_or_header),
+):
+    """
+    Generate printable Gate Pass PDF for a rider with all assigned orders and total COD cash calculation.
+    """
+    query = db.query(models.Order).filter(models.Order.assigned_rider_name == rider_name)
+    if order_ids:
+        ids_list = [int(x.strip()) for x in order_ids.split(",") if x.strip().isdigit()]
+        if ids_list:
+            query = query.filter(models.Order.id.in_(ids_list))
+    else:
+        query = query.filter(models.Order.status.in_(["ready_to_ship", "out_for_delivery"]))
+
+    orders = query.all()
+    if not orders:
+        raise HTTPException(status_code=404, detail="No orders found for this rider")
+
+    now = datetime.utcnow()
+    gate_pass_no = orders[0].gate_pass_no or f"GP-{now.year}{now.month:02d}-{now.strftime('%H%M%S')}"
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        rightMargin=1.5 * cm,
+        leftMargin=1.5 * cm,
+        topMargin=1.5 * cm,
+        bottomMargin=1.5 * cm,
+    )
+
+    styles = getSampleStyleSheet()
+    story = []
+
+    # Title Header
+    story.append(Paragraph(
+        f"<font size=22 color='#16a34a'><b>{COMPANY['name']}</b></font><br/>"
+        f"<font size=16 color='#111827'><b>DISPATCH GATE PASS</b></font>",
+        ParagraphStyle("gp_title", alignment=TA_CENTER, leading=22)
+    ))
+    story.append(Spacer(1, 0.3 * cm))
+    story.append(HRFlowable(width="100%", thickness=2, color=BRAND_GREEN))
+    story.append(Spacer(1, 0.4 * cm))
+
+    # Details Block
+    total_cod = sum(o.total_amount for o in orders if (o.payment_method or o.payment_status or "").lower() == "cod")
+    info_text = (
+        f"<b>Gate Pass #:</b> {gate_pass_no}<br/>"
+        f"<b>Date & Time:</b> {_fmt_ts(now)}<br/>"
+        f"<b>Rider Name:</b> {rider_name}<br/>"
+        f"<b>Total Orders:</b> {len(orders)}<br/>"
+        f"<b>Total COD to Collect:</b> PKR {total_cod:,.0f}"
+    )
+    story.append(Paragraph(info_text, ParagraphStyle("gp_info", fontSize=10, leading=16)))
+    story.append(Spacer(1, 0.5 * cm))
+
+    # Orders Table
+    table_data = [["S.No", "Order #", "Customer Name", "Phone & Address", "Payment Method", "COD Amount"]]
+    for i, o in enumerate(orders, 1):
+        pm = (o.payment_method or o.payment_status or "COD").upper()
+        cod_str = f"PKR {o.total_amount:,.0f}" if pm == "COD" else "PAID (0.0)"
+        table_data.append([
+            str(i),
+            o.order_number or f"#{o.id}",
+            o.customer_name or "Customer",
+            f"{o.customer_phone or 'N/A'}\n{o.delivery_address or ''}",
+            pm,
+            cod_str,
+        ])
+
+    table = Table(table_data, colWidths=[1 * cm, 3 * cm, 4 * cm, 5 * cm, 2.5 * cm, 2.5 * cm])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), BRAND_GREEN),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#bbf7d0")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    story.append(table)
+    story.append(Spacer(1, 0.6 * cm))
+
+    # Total COD Summary Box
+    tot_data = [["", "EXPECTED COD CASH BRING-BACK:", f"PKR {total_cod:,.0f}"]]
+    tot_table = Table(tot_data, colWidths=[8 * cm, 6 * cm, 4 * cm])
+    tot_table.setStyle(TableStyle([
+        ("BACKGROUND", (1, 0), (-1, -1), BRAND_GREEN),
+        ("TEXTCOLOR", (1, 0), (-1, -1), colors.white),
+        ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 10),
+        ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.append(tot_table)
+    story.append(Spacer(1, 1.2 * cm))
+
+    # Signatures
+    sig_data = [
+        ["________________________", "________________________", "________________________"],
+        ["Dispatched By (Warehouse)", "Rider Signature", "Gate Security Stamp / Pass"]
+    ]
+    sig_table = Table(sig_data, colWidths=[6 * cm, 6 * cm, 6 * cm])
+    sig_table.setStyle(TableStyle([
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("FONTSIZE", (0, 1), (-1, 1), 9),
+        ("TEXTCOLOR", (0, 1), (-1, 1), GRAY_TEXT),
+    ]))
+    story.append(sig_table)
+
+    doc.build(story)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="GatePass_{gate_pass_no}.pdf"'},
+    )
+
+
 # ─── Full PDF Invoice ─────────────────────────────────────────────────────────
 
 @router.get("/{order_id}/pdf")
@@ -196,6 +323,9 @@ def download_invoice(
     styles = getSampleStyleSheet()
     story = []
 
+    pay_status_str = (order.payment_status or "COD").upper()
+    source_str = (order.source or "website").replace("_", " ").title()
+
     # ── Header ────────────────────────────────────────────────────────────────
     header_data = [
         [
@@ -206,7 +336,7 @@ def download_invoice(
             ),
             Paragraph(
                 f"<font size=24 color='#16a34a'><b>INVOICE</b></font><br/>"
-                f"<font size=9 color='#6b7280'># {order.order_number}</font>",
+                f"<font size=9 color='#6b7280'># {order.order_number or order.id}</font>",
                 ParagraphStyle("right", alignment=TA_RIGHT, fontSize=9)
             ),
         ]
@@ -230,15 +360,15 @@ def download_invoice(
                 ParagraphStyle("left", fontSize=9, leading=14)
             ),
             Paragraph(
-                f"<b>Bill To:</b><br/>{order.customer_name}<br/>"
+                f"<b>Bill To:</b><br/>{order.customer_name or 'Valued Customer'}<br/>"
                 f"Ph: {order.customer_phone or '—'}<br/>"
                 f"{order.delivery_address or '—'}<br/>{order.city or ''}",
                 ParagraphStyle("left", fontSize=9, leading=14)
             ),
             Paragraph(
                 f"<b>Date:</b><br/>{_fmt_ts(order.created_at)}<br/><br/>"
-                f"<b>Payment:</b><br/>{order.payment_status.upper()}<br/><br/>"
-                f"<b>Source:</b><br/>{order.source.replace('_', ' ').title()}",
+                f"<b>Payment:</b><br/>{pay_status_str}<br/><br/>"
+                f"<b>Source:</b><br/>{source_str}",
                 ParagraphStyle("left", fontSize=9, leading=14)
             ),
         ]
@@ -484,6 +614,10 @@ def download_receipt(
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+ 
+# ─── List All Invoices ────────────────────────────────────────────────────────
 
 
 # ─── List All Invoices ────────────────────────────────────────────────────────

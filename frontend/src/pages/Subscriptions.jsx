@@ -172,7 +172,14 @@ function SubForm({ sub, products, onSave, onCancel }) {
             <div className="col-span-2"><input type="number" min={1} className="input text-center text-xs" value={it.quantity} onChange={(e) => setItem(i, "quantity", e.target.value)} /></div>
             <div className="col-span-3"><input type="number" min={0} placeholder="PKR" className="input text-xs" value={it.unit_price} onChange={(e) => setItem(i, "unit_price", e.target.value)} /></div>
             <div className="col-span-1 flex justify-end">
-              {items.length > 1 && <button type="button" onClick={() => setItems((p) => p.filter((_, j) => j !== i))} className="p-1 text-red-500 hover:bg-red-900/20 rounded"><Trash2 className="w-3.5 h-3.5" /></button>}
+              <button
+                type="button"
+                onClick={() => setItems((p) => (p.length > 1 ? p.filter((_, j) => j !== i) : [{ product_name: "", quantity: 1, unit_price: 0 }]))}
+                className="p-1 text-red-400 hover:bg-red-900/20 rounded"
+                title="Remove item"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
             </div>
           </div>
         ))}

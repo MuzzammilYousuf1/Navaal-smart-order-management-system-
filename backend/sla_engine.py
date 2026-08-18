@@ -91,7 +91,7 @@ def run_sla_check():
                 _log_notification(
                     db, order,
                     notification_type="sla_alert_1",
-                    subject=f"⚠️ Order {order.order_number} — Rider Pickup Overdue (45 min)",
+                    subject=f"WARNING: Order {order.order_number} — Rider Pickup Overdue (45 min)",
                     message=(
                         f"Order {order.order_number} for {order.customer_name} "
                         f"has been Ready to Ship for 45 minutes with no rider pickup. "
@@ -109,7 +109,7 @@ def run_sla_check():
                 _log_notification(
                     db, order,
                     notification_type="sla_alert_2",
-                    subject=f"🚨 URGENT — Order {order.order_number} Waiting 60 Minutes!",
+                    subject=f"URGENT — Order {order.order_number} Waiting 60 Minutes!",
                     message=(
                         f"URGENT: Order {order.order_number} for {order.customer_name} "
                         f"({order.city}) has been waiting for rider pickup for 60 minutes. "
@@ -127,7 +127,7 @@ def run_sla_check():
                 _log_notification(
                     db, order,
                     notification_type="sla_manager",
-                    subject=f"🔴 MANAGER ALERT — Order {order.order_number} (75 min overdue)",
+                    subject=f"MANAGER ALERT — Order {order.order_number} (75 min overdue)",
                     message=(
                         f"Manager Escalation: Order {order.order_number} for "
                         f"{order.customer_name} has been sitting Ready to Ship for 75 minutes. "
@@ -145,7 +145,7 @@ def run_sla_check():
                 _log_notification(
                     db, order,
                     notification_type="sla_owner",
-                    subject=f"🔴🔴 OWNER ALERT — Order {order.order_number} (90 min!)",
+                    subject=f"OWNER ALERT — Order {order.order_number} (90 min!)",
                     message=(
                         f"Owner Escalation: Order {order.order_number} for "
                         f"{order.customer_name} has been at Ready to Ship for 90 MINUTES. "

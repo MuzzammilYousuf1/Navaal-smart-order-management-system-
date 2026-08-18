@@ -21,6 +21,7 @@ import ScanOrder from "./pages/ScanOrder";
 import Invoices from "./pages/Invoices";
 import Subscriptions from "./pages/Subscriptions";
 import Tasks from "./pages/Tasks";
+import CustomerProfiles from "./pages/CustomerProfiles";
 
 function ProtectedLayout() {
   const [toasts, setToasts] = useState([]);
@@ -59,6 +60,7 @@ function ProtectedLayout() {
           <Route path="/reports"        element={<Reports />} />
           <Route path="/reporting"      element={<Reports />} />
           <Route path="/subscriptions"   element={<Subscriptions />} />
+          <Route path="/customers"       element={<CustomerProfiles />} />
           <Route path="/notifications"  element={<Notifications />} />
           <Route path="/users"          element={<Users />} />
           <Route path="/tasks"          element={<Tasks />} />

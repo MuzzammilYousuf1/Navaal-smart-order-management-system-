@@ -40,6 +40,9 @@ def create_order(
     order_number = _generate_order_number(db)
     total = sum(item.unit_price * item.quantity for item in data.items)
 
+    pay_method = data.payment_method or "cod"
+    pay_status = data.payment_status or ("received" if (data.amount_received or 0) > 0 else "cod")
+
     order = models.Order(
         order_number=order_number,
         customer_name=data.customer_name,
@@ -49,8 +52,9 @@ def create_order(
         location_url=data.location_url,
         source=data.source,
         priority=data.priority,
-        payment_status=data.payment_status,
-        payment_method=data.payment_status if data.payment_status in ("cod", "online", "credit") else "cod",
+        payment_status=pay_status,
+        payment_method=pay_method,
+        amount_received=data.amount_received or 0.0,
         notes=data.notes,
         assigned_rider_name=data.assigned_rider_name,
         total_amount=total,
@@ -164,6 +168,44 @@ def create_order(
     return order
 
 
+def restock_order_inventory(db: Session, order: models.Order, created_by: str = "System", note: str = "Order return"):
+    """Credit stock back to inventory when an order is cancelled or returned."""
+    if getattr(order, "is_restocked", False):
+        return
+
+    for item in order.items:
+        product = None
+        if item.product_id:
+            product = db.query(models.Product).filter(models.Product.id == item.product_id).first()
+        if not product:
+            product = db.query(models.Product).filter(models.Product.name.ilike(f"%{item.product_name}%")).first()
+
+        if product:
+            target_product = product
+            if product.base_product_id:
+                base_p = db.query(models.Product).filter(models.Product.id == product.base_product_id).first()
+                if base_p:
+                    target_product = base_p
+
+            multiplier = product.unit_multiplier or 1.0
+            return_qty = item.quantity * multiplier
+
+            target_product.stock_qty += return_qty
+            movement = models.StockMovement(
+                product_id=target_product.id,
+                order_id=order.id,
+                movement_type="return",
+                quantity_change=return_qty,
+                quantity_after=target_product.stock_qty,
+                note=f"Restocked {item.quantity}x {product.name} ({multiplier} units/pack) via {note} (#{order.order_number})",
+                created_by=created_by,
+                created_at=datetime.utcnow(),
+            )
+            db.add(movement)
+
+    order.is_restocked = True
+
+
 @router.post("/{order_id}/complete-delivery", response_model=schemas.OrderOut)
 def complete_delivery(
     order_id: int,
@@ -193,6 +235,8 @@ def complete_delivery(
     if data.outcome == "returned":
         order.payment_status = "returned"
         order.amount_received = 0.0
+        # Automatically refund inventory stock on return
+        restock_order_inventory(db, order, current_user.name, note="Delivery Returned (RTS)")
     else:
         order.payment_method = data.payment_method
         order.amount_received = data.amount_received
@@ -294,8 +338,31 @@ def update_order(
         raise HTTPException(status_code=404, detail="Order not found")
 
     old_status = order.status
-    for field, value in data.model_dump(exclude_unset=True).items():
+    update_data = data.model_dump(exclude_unset=True)
+    items_data = update_data.pop("items", None)
+
+    for field, value in update_data.items():
         setattr(order, field, value)
+
+    if items_data is not None:
+        db.query(models.OrderItem).filter(models.OrderItem.order_id == order.id).delete()
+        new_total = 0.0
+        for item_in in items_data:
+            u_price = item_in.get("unit_price", 0.0) or 0.0
+            qty = item_in.get("quantity", 1) or 1
+            t_price = u_price * qty
+            new_total += t_price
+            new_item = models.OrderItem(
+                order_id=order.id,
+                product_id=item_in.get("product_id"),
+                product_name=item_in.get("product_name", ""),
+                quantity=qty,
+                unit_price=u_price,
+                total_price=t_price,
+            )
+            db.add(new_item)
+        if "total_amount" not in update_data:
+            order.total_amount = new_total
 
     if data.status and data.status != old_status:
         now = datetime.utcnow()
@@ -354,6 +421,9 @@ def update_status(
     elif data.new_status == "delivered":
         order.delivered_at = now
 
+    elif data.new_status in ("returned", "cancelled"):
+        restock_order_inventory(db, order, current_user.name, note=f"Status changed to {data.new_status.title()}")
+
     history = models.StatusHistory(
         order_id=order.id,
         old_status=old_status,
@@ -366,6 +436,225 @@ def update_status(
     db.commit()
     db.refresh(order)
     return order
+
+
+# ─── Bulk RTS / Fast Packaging RTS ───────────────────────────────────────────
+
+@router.post("/bulk-rts")
+def bulk_rts(
+    data: schemas.BulkRtsRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """
+    Fast Packaging RTS Endpoint.
+    Marks all pending orders (or specific order_ids) as 'ready_to_ship' in bulk.
+    """
+    now = datetime.utcnow()
+    query = db.query(models.Order)
+
+    if data.order_ids and len(data.order_ids) > 0:
+        query = query.filter(models.Order.id.in_(data.order_ids))
+    else:
+        query = query.filter(models.Order.status == "pending")
+
+    orders = query.all()
+    count = 0
+    for o in orders:
+        if o.status == "pending":
+            old_s = o.status
+            o.status = "ready_to_ship"
+            o.rts_at = now
+            o.pickup_deadline = now + timedelta(minutes=SLA_MINUTES)
+            o.sla_alert_1_sent = False
+            o.sla_alert_2_sent = False
+            o.sla_manager_sent = False
+            o.sla_owner_sent = False
+
+            db.add(models.StatusHistory(
+                order_id=o.id,
+                old_status=old_s,
+                new_status="ready_to_ship",
+                changed_by=current_user.name,
+                changed_at=now,
+                note=data.note or "Bulk Fast RTS",
+            ))
+            count += 1
+
+    db.commit()
+
+    try:
+        from sla_engine import broadcast_ws_message
+        broadcast_ws_message({
+            "type": "sla_alert",
+            "order_number": f"{count} Orders",
+            "customer_name": "Bulk Fast RTS Complete",
+            "notification_type": "info",
+            "message": f"Packaging complete for {count} orders by {current_user.name}",
+            "timestamp": now.isoformat(),
+        })
+    except Exception:
+        pass
+
+    return {"message": f"Successfully updated {count} orders to Ready To Ship (RTS)", "count": count}
+
+
+# ─── Rider Management & Gate Pass Dispatch ────────────────────────────────────
+
+@router.get("/riders/summary")
+def get_riders_summary(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """
+    Rider Details & COD Cash Collection Summary.
+    Group orders by assigned rider name, calculating COD amounts to bring back.
+    """
+    orders = db.query(models.Order).filter(models.Order.status.in_(["ready_to_ship", "out_for_delivery", "delivered"])).all()
+    riders_map = {}
+
+    # Also list all user accounts with role 'rider'
+    rider_users = db.query(models.User).filter(models.User.role == "rider").all()
+    for ru in rider_users:
+        riders_map[ru.name] = {
+            "rider_id": ru.id,
+            "rider_name": ru.name,
+            "username": ru.username,
+            "email": ru.email,
+            "assigned_count": 0,
+            "rts_count": 0,
+            "out_count": 0,
+            "delivered_count": 0,
+            "total_cod_amount": 0.0,
+            "cod_collected_amount": 0.0,
+            "orders": [],
+        }
+
+    for o in orders:
+        rname = o.assigned_rider_name or "Unassigned Rider"
+        if rname not in riders_map:
+            riders_map[rname] = {
+                "rider_id": None,
+                "rider_name": rname,
+                "username": None,
+                "email": None,
+                "assigned_count": 0,
+                "rts_count": 0,
+                "out_count": 0,
+                "delivered_count": 0,
+                "total_cod_amount": 0.0,
+                "cod_collected_amount": 0.0,
+                "orders": [],
+            }
+
+        rm = riders_map[rname]
+        rm["assigned_count"] += 1
+        if o.status == "ready_to_ship":
+            rm["rts_count"] += 1
+        elif o.status == "out_for_delivery":
+            rm["out_count"] += 1
+            if o.payment_method == "cod" or o.payment_status == "cod":
+                rm["total_cod_amount"] += o.total_amount
+        elif o.status == "delivered":
+            rm["delivered_count"] += 1
+            if o.payment_method == "cod" and o.payment_status in ("received", "delivered"):
+                rm["cod_collected_amount"] += (o.amount_received or o.total_amount)
+
+        rm["orders"].append({
+            "id": o.id,
+            "order_number": o.order_number,
+            "customer_name": o.customer_name,
+            "customer_phone": o.customer_phone,
+            "delivery_address": o.delivery_address,
+            "city": o.city,
+            "status": o.status,
+            "payment_method": o.payment_method or o.payment_status,
+            "total_amount": o.total_amount,
+            "gate_pass_no": o.gate_pass_no,
+            "gate_pass_printed_at": o.gate_pass_printed_at.isoformat() if o.gate_pass_printed_at else None,
+        })
+
+    return list(riders_map.values())
+
+
+@router.post("/gate-pass/dispatch")
+def dispatch_gate_pass(
+    req: schemas.GatePassRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """
+    Gate Pass Dispatch:
+    Filter per rider, select orders, print gate passes, and mark orders 'out_for_delivery'!
+    Prepares automatic rider notification log entries.
+    """
+    now = datetime.utcnow()
+    orders = db.query(models.Order).filter(models.Order.id.in_(req.order_ids)).all()
+    if not orders:
+        raise HTTPException(status_code=404, detail="No valid orders found for Gate Pass")
+
+    gate_pass_no = f"GP-{now.year}{now.month:02d}-{now.strftime('%H%M%S')}"
+
+    updated_count = 0
+    total_cod = 0.0
+    for o in orders:
+        old_s = o.status
+        o.assigned_rider_name = req.rider_name
+        o.status = "out_for_delivery"
+        o.pickup_at = now
+        o.gate_pass_no = gate_pass_no
+        o.gate_pass_printed_at = now
+
+        if o.payment_method == "cod" or o.payment_status == "cod":
+            total_cod += o.total_amount
+
+        db.add(models.StatusHistory(
+            order_id=o.id,
+            old_status=old_s,
+            new_status="out_for_delivery",
+            changed_by=current_user.name,
+            changed_at=now,
+            note=f"Gate Pass #{gate_pass_no} printed. Dispatched to Rider {req.rider_name}.",
+        ))
+        updated_count += 1
+
+    # Log rider notification dispatch entry (Future automated WhatsApp/SMS hook)
+    db.add(models.NotificationLog(
+        notification_type="rider_update",
+        subject=f"GATE_PASS_PRINTED_{gate_pass_no}",
+        recipient=req.rider_name,
+        message=(
+            f"Gate Pass {gate_pass_no} printed for {req.rider_name} with {updated_count} orders. "
+            f"Total COD to collect: PKR {total_cod:,.0f}. Orders set to Out For Delivery."
+        ),
+        delivery_status="logged",
+        sent_at=now,
+    ))
+
+    db.commit()
+
+    try:
+        from sla_engine import broadcast_ws_message
+        broadcast_ws_message({
+            "type": "sla_alert",
+            "order_number": gate_pass_no,
+            "customer_name": f"Gate Pass - {req.rider_name}",
+            "notification_type": "info",
+            "message": f"Dispatched {updated_count} orders to {req.rider_name}. Total COD: PKR {total_cod:,.0f}",
+            "timestamp": now.isoformat(),
+        })
+    except Exception:
+        pass
+
+    return {
+        "gate_pass_no": gate_pass_no,
+        "rider_name": req.rider_name,
+        "vehicle_number": req.vehicle_number or "N/A",
+        "orders_count": updated_count,
+        "total_cod_amount": total_cod,
+        "printed_at": now.isoformat(),
+        "message": f"Gate Pass {gate_pass_no} created! {updated_count} orders updated to Out for Delivery.",
+    }
 
 
 @router.delete("/{order_id}")

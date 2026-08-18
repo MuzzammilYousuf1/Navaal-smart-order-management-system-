@@ -142,7 +142,7 @@ export default function ScanOrder() {
             <div className="card bg-red-950/40 border-red-700/50 text-red-300 flex items-center gap-3">
               <AlertCircle className="w-8 h-8 text-red-400 shrink-0" />
               <div>
-                <p className="font-bold text-sm">🔴 SCAN UNVERIFIED</p>
+                <p className="font-bold text-sm">SCAN UNVERIFIED</p>
                 <p className="text-xs">{errorMsg}</p>
               </div>
             </div>
@@ -152,7 +152,7 @@ export default function ScanOrder() {
             <div className="card bg-emerald-950/40 border-emerald-700/50 text-emerald-300 flex items-center gap-3">
               <CheckCircle className="w-8 h-8 text-emerald-400 shrink-0" />
               <div>
-                <p className="font-bold text-sm">✅ PACK VERIFIED & READY TO SHIP!</p>
+                <p className="font-bold text-sm">PACK VERIFIED & READY TO SHIP!</p>
                 <p className="text-xs">Order #{scannedOrder?.order_number} marked as Ready to Ship.</p>
               </div>
             </div>

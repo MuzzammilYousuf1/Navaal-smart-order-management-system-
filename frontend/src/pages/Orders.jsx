@@ -2,14 +2,35 @@ import { useEffect, useState, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Search, Filter, RefreshCw, Plus, ChevronRight, FileSpreadsheet,
-  Upload, Download, Trash2, CheckCircle, AlertTriangle, MapPin, Edit3
+  Upload, Download, Trash2, CheckCircle, AlertTriangle, MapPin, Edit3, Truck, Package
 } from "lucide-react";
 import api from "../api/client";
 import { StatusBadge, PriorityBadge, PaymentBadge } from "../components/StatusBadge";
 import LiveTimer from "../components/LiveTimer";
 import EditOrderModal from "../components/EditOrderModal";
+import RiderGatePassModal from "../components/RiderGatePassModal";
 import { format } from "date-fns";
 import { API_BASE } from "../api/client";
+
+// Channel badge helper
+function ChannelBadge({ source }) {
+  const styles = {
+    b2b:       "bg-purple-900/40 text-purple-300 border-purple-700/50",
+    b2c:       "bg-sky-900/40 text-sky-300 border-sky-700/50",
+    whatsapp:  "bg-emerald-900/40 text-emerald-300 border-emerald-700/50",
+    website:   "bg-brand-900/40 text-brand-300 border-brand-700/50",
+    phone:     "bg-amber-900/40 text-amber-300 border-amber-700/50",
+    facebook:  "bg-blue-900/40 text-blue-300 border-blue-700/50",
+    instagram: "bg-pink-900/40 text-pink-300 border-pink-700/50",
+    walk_in:   "bg-orange-900/40 text-orange-300 border-orange-700/50",
+  };
+  const label = { b2b: "B2B", b2c: "B2C", walk_in: "Walk-in" }[source] || (source || "—");
+  return (
+    <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${styles[source] || "bg-surface-800 text-brand-500 border-surface-600"}`}>
+      {label}
+    </span>
+  );
+}
 
 const STATUS_OPTIONS = [
   { value: "",                label: "All Statuses" },
@@ -49,26 +70,6 @@ const PAYMENT_OPTIONS = [
   { value: "returned", label: "Returned" },
 ];
 
-// Channel badge helper
-function ChannelBadge({ source }) {
-  const styles = {
-    b2b:       "bg-purple-900/40 text-purple-300 border-purple-700/50",
-    b2c:       "bg-sky-900/40 text-sky-300 border-sky-700/50",
-    whatsapp:  "bg-emerald-900/40 text-emerald-300 border-emerald-700/50",
-    website:   "bg-brand-900/40 text-brand-300 border-brand-700/50",
-    phone:     "bg-amber-900/40 text-amber-300 border-amber-700/50",
-    facebook:  "bg-blue-900/40 text-blue-300 border-blue-700/50",
-    instagram: "bg-pink-900/40 text-pink-300 border-pink-700/50",
-    walk_in:   "bg-orange-900/40 text-orange-300 border-orange-700/50",
-  };
-  const label = { b2b: "B2B", b2c: "B2C", walk_in: "Walk-in" }[source] || (source || "—");
-  return (
-    <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${styles[source] || "bg-surface-800 text-brand-500 border-surface-600"}`}>
-      {label}
-    </span>
-  );
-}
-
 export default function Orders() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -82,12 +83,13 @@ export default function Orders() {
   });
   const navigate = useNavigate();
 
-  // CSV Data Management state
+  // CSV & Gate Pass state
   const [csvLoading, setCsvLoading] = useState(false);
   const [statusMsg, setStatusMsg] = useState("");
-  const [statusType, setStatusType] = useState(""); // "success" | "error"
+  const [statusType, setStatusType] = useState("");
   const [importErrors, setImportErrors] = useState([]);
   const [editingOrder, setEditingOrder] = useState(null);
+  const [showGatePassModal, setShowGatePassModal] = useState(false);
 
   const showStatus = (msg, type = "success") => {
     setStatusMsg(msg);
@@ -114,6 +116,20 @@ export default function Orders() {
     const timer = setTimeout(fetchOrders, 300);
     return () => clearTimeout(timer);
   }, [fetchOrders]);
+
+  const handleBulkRts = async () => {
+    if (!window.confirm("📦 Convert ALL pending orders to 'Ready to Ship' (Fast Packaging RTS)?")) return;
+    setCsvLoading(true);
+    try {
+      const { data } = await api.post("/api/orders/bulk-rts", { note: "Fast Packaging Bulk RTS" });
+      showStatus(`✅ ${data.message}`, "success");
+      fetchOrders();
+    } catch (err) {
+      showStatus(`❌ ${err.response?.data?.detail || "Bulk RTS failed"}`, "error");
+    } finally {
+      setCsvLoading(false);
+    }
+  };
 
   const setFilter = (key, val) => setFilters((f) => ({ ...f, [key]: val }));
 
@@ -182,6 +198,25 @@ export default function Orders() {
           <p className="text-brand-500 text-sm mt-0.5">{orders.length} order{orders.length !== 1 ? "s" : ""} found</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {/* Fast Auto RTS */}
+          <button
+            onClick={handleBulkRts}
+            disabled={csvLoading}
+            className="btn-secondary text-xs text-amber-300 border-amber-800/60 bg-amber-950/30 hover:bg-amber-900/40"
+            title="Mark all pending orders as Ready to Ship"
+          >
+            <Package className="w-3.5 h-3.5 text-amber-400" /> Auto RTS All
+          </button>
+
+          {/* Rider Gate Pass Modal */}
+          <button
+            onClick={() => setShowGatePassModal(true)}
+            className="btn-secondary text-xs text-emerald-300 border-emerald-800/60 bg-emerald-950/30 hover:bg-emerald-900/40"
+            title="Create rider gate pass slips & set orders out for delivery"
+          >
+            <Truck className="w-3.5 h-3.5 text-emerald-400" /> Rider Gate Pass
+          </button>
+
           {/* Export */}
           <button
             onClick={handleExportOrders}
@@ -387,6 +422,13 @@ export default function Orders() {
         isOpen={Boolean(editingOrder)}
         onClose={() => setEditingOrder(null)}
         onSaveSuccess={fetchOrders}
+      />
+
+      {/* Rider Gate Pass Modal */}
+      <RiderGatePassModal
+        isOpen={showGatePassModal}
+        onClose={() => setShowGatePassModal(false)}
+        onDispatchSuccess={fetchOrders}
       />
     </div>
   );

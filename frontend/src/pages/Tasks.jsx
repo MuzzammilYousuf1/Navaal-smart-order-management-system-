@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import {
   ClipboardList, CheckCircle2, Clock, Plus, Calendar, User,
-  Send, Eye, RefreshCw, Trash2, PlusCircle, GripVertical, FileText
+  Send, Eye, RefreshCw, Trash2, PlusCircle, GripVertical, FileText, MessageSquare
 } from "lucide-react";
 import api from "../api/client";
 import useAuth from "../store/useAuth";
+import WorkspaceChat from "../components/WorkspaceChat";
 
 const FIELD_TYPES = [
   { value: "number",   label: "Number" },
@@ -109,6 +110,7 @@ function DynamicForm({ schema, responses, onChange }) {
 export default function Tasks() {
   const { user } = useAuth();
   const isManager = user?.role === "admin" || user?.role === "manager";
+  const [activeTab, setActiveTab] = useState("tasks"); // "tasks" | "chat"
 
   const [tasks, setTasks]           = useState([]);
   const [users, setUsers]           = useState([]);
@@ -238,24 +240,54 @@ export default function Tasks() {
         </div>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-3 gap-4">
-        {[
-          { label: "Total", val: tasks.length, color: "text-white" },
-          { label: "Pending", val: tasks.filter(t => t.status === "pending").length, color: "text-amber-400" },
-          { label: "Completed", val: tasks.filter(t => t.status === "completed").length, color: "text-emerald-400" },
-        ].map(s => (
-          <div key={s.label} className="card text-center py-4">
-            <p className={`text-3xl font-bold ${s.color}`}>{s.val}</p>
-            <p className="text-[10px] uppercase tracking-wider text-brand-500 mt-1">{s.label}</p>
-          </div>
-        ))}
+      {/* Tabs */}
+      <div className="flex items-center gap-3 border-b border-surface-700 pb-2">
+        <button
+          onClick={() => setActiveTab("tasks")}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+            activeTab === "tasks"
+              ? "bg-brand-600 text-white shadow-lg shadow-brand-950/40"
+              : "bg-surface-800 text-brand-400 hover:text-white"
+          }`}
+        >
+          <ClipboardList className="w-4 h-4" />
+          Task Management & Stock Audits ({tasks.length})
+        </button>
+        <button
+          onClick={() => setActiveTab("chat")}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+            activeTab === "chat"
+              ? "bg-brand-600 text-white shadow-lg shadow-brand-950/40"
+              : "bg-surface-800 text-brand-400 hover:text-white"
+          }`}
+        >
+          <MessageSquare className="w-4 h-4 text-emerald-400" />
+          Team Workspace Chat
+        </button>
       </div>
 
-      {/* Task list */}
-      {loading ? (
-        <p className="text-brand-500 animate-pulse text-center py-16">Loading...</p>
-      ) : tasks.length === 0 ? (
+      {activeTab === "chat" ? (
+        <WorkspaceChat />
+      ) : (
+        <>
+          {/* Stats */}
+          <div className="grid grid-cols-3 gap-4">
+            {[
+              { label: "Total", val: tasks.length, color: "text-white" },
+              { label: "Pending", val: tasks.filter(t => t.status === "pending").length, color: "text-amber-400" },
+              { label: "Completed", val: tasks.filter(t => t.status === "completed").length, color: "text-emerald-400" },
+            ].map(s => (
+              <div key={s.label} className="card text-center py-4">
+                <p className={`text-3xl font-bold ${s.color}`}>{s.val}</p>
+                <p className="text-[10px] uppercase tracking-wider text-brand-500 mt-1">{s.label}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Task list */}
+          {loading ? (
+            <p className="text-brand-500 animate-pulse text-center py-16">Loading...</p>
+          ) : tasks.length === 0 ? (
         <div className="card text-center py-16 space-y-2">
           <ClipboardList className="w-10 h-10 text-brand-700 mx-auto" />
           <p className="text-brand-400 font-semibold">No tasks yet</p>
@@ -319,6 +351,8 @@ export default function Tasks() {
             );
           })}
         </div>
+      )}
+        </>
       )}
 
       {/* ── CREATE TASK MODAL ───────────────────────────────────── */}

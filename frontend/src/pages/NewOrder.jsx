@@ -94,7 +94,14 @@ export default function NewOrder() {
   };
 
   const addItem = () => setItems((prev) => [...prev, { product_id: "", product_name: "", quantity: 1, unit_price: 0 }]);
-  const removeItem = (i) => setItems((prev) => prev.filter((_, idx) => idx !== i));
+  const removeItem = (i) => {
+    setItems((prev) => {
+      if (prev.length <= 1) {
+        return [{ product_id: "", product_name: "", quantity: 1, unit_price: 0 }];
+      }
+      return prev.filter((_, idx) => idx !== i);
+    });
+  };
 
   const total = items.reduce((s, it) => s + (Number(it.unit_price) * Number(it.quantity)), 0);
 
@@ -240,6 +247,10 @@ export default function NewOrder() {
                   <option value="whatsapp">WhatsApp</option>
                   <option value="phone">Phone</option>
                   <option value="walk_in">Walk-in</option>
+                  <option value="b2b">B2B Sales</option>
+                  <option value="b2c">B2C Sales</option>
+                  <option value="facebook">Facebook</option>
+                  <option value="instagram">Instagram</option>
                 </select>
               </div>
               <div>
@@ -319,11 +330,9 @@ export default function NewOrder() {
                     />
                   </div>
                   <div className="sm:col-span-1 flex justify-end sm:justify-center">
-                    {items.length > 1 && (
-                      <button type="button" onClick={() => removeItem(i)} className="btn-danger p-2" title="Remove item">
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
+                    <button type="button" onClick={() => removeItem(i)} className="btn-danger p-2" title="Remove item">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 </div>
               ))}

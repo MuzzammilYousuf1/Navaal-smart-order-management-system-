@@ -78,7 +78,9 @@ class OrderCreate(BaseModel):
     location_url: Optional[str] = None
     source: str = "website"
     priority: str = "normal"
-    payment_status: str = "cod"
+    payment_method: Optional[str] = "cod"
+    payment_status: Optional[str] = "cod"
+    amount_received: float = 0.0
     notes: Optional[str] = None
     assigned_rider_name: Optional[str] = None
     items: List[OrderItemIn] = []
@@ -100,6 +102,7 @@ class OrderUpdate(BaseModel):
     notes: Optional[str] = None
     assigned_rider_name: Optional[str] = None
     assigned_staff_id: Optional[int] = None
+    items: Optional[List[OrderItemIn]] = None
 
 
 class StatusUpdate(BaseModel):
@@ -223,6 +226,8 @@ class RestockRequest(BaseModel):
 
 class SpoilageRequest(BaseModel):
     quantity: float
+    action: Optional[str] = None       # e.g. "sent_in_order", "discarded", "staff_use", "returned_to_supplier", "other"
+    order_number: Optional[str] = None # Optional order number reference if sent in order
     note: Optional[str] = None
 
 
@@ -399,4 +404,39 @@ class TaskOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ─── Chat & Gate Pass ─────────────────────────────────────────────────────────
+
+class ChatMessageCreate(BaseModel):
+    message: str
+    task_id: Optional[int] = None
+    order_id: Optional[int] = None
+
+
+class ChatMessageOut(BaseModel):
+    id: int
+    sender_id: Optional[int]
+    sender_name: str
+    sender_role: Optional[str]
+    task_id: Optional[int]
+    order_id: Optional[int]
+    message: str
+    created_at: datetime
+    is_system_msg: bool
+
+    class Config:
+        from_attributes = True
+
+
+class GatePassRequest(BaseModel):
+    rider_name: str
+    order_ids: List[int]
+    vehicle_number: Optional[str] = None
+    driver_phone: Optional[str] = None
+
+
+class BulkRtsRequest(BaseModel):
+    order_ids: Optional[List[int]] = None
+    note: Optional[str] = "Bulk RTS packaging complete"
 

@@ -13,7 +13,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from database import engine
 import models
 from sla_engine import run_sla_check, set_ws_manager
-from routers import auth, orders, dashboard, reports, notifications, users, tracking, inventory, invoices, data_mgmt, customers, subscriptions, tasks
+from routers import auth, orders, dashboard, reports, notifications, users, tracking, inventory, invoices, data_mgmt, customers, subscriptions, tasks, chat
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("main")
@@ -86,6 +86,15 @@ async def lifespan(app: FastAPI):
         oi_columns = {row[1] for row in connection.exec_driver_sql("PRAGMA table_info(order_items)")}
         if "product_id" not in oi_columns:
             connection.exec_driver_sql("ALTER TABLE order_items ADD COLUMN product_id INTEGER")
+
+        # Add gate pass and restock columns to orders table if missing
+        if "gate_pass_no" not in columns:
+            connection.exec_driver_sql("ALTER TABLE orders ADD COLUMN gate_pass_no VARCHAR")
+        if "gate_pass_printed_at" not in columns:
+            connection.exec_driver_sql("ALTER TABLE orders ADD COLUMN gate_pass_printed_at DATETIME")
+        if "is_restocked" not in columns:
+            connection.exec_driver_sql("ALTER TABLE orders ADD COLUMN is_restocked BOOLEAN DEFAULT 0")
+
     logger.info("Database tables created/verified ✓")
 
     # Give SLA engine access to WebSocket manager
@@ -135,6 +144,7 @@ app.include_router(data_mgmt.router)
 app.include_router(customers.router)
 app.include_router(subscriptions.router)
 app.include_router(tasks.router)
+app.include_router(chat.router)
 
 
 # ─── WebSocket Endpoint ────────────────────────────────────────────────────────

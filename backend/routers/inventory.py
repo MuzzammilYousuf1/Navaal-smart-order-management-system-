@@ -307,6 +307,20 @@ def report_spoilage(
     if data.quantity <= 0:
         raise HTTPException(status_code=400, detail="Spoiled quantity must be positive")
 
+    action_label = {
+        "sent_in_order": "Sent with Customer Order",
+        "discarded": "Discarded / Dumped",
+        "staff_use": "Staff / Internal Usage",
+        "returned_to_supplier": "Returned to Supplier",
+        "other": "Other Action",
+    }.get(data.action, data.action or "Spoilage/Broken")
+
+    action_details = f"Action: {action_label}"
+    if data.order_number:
+        action_details += f" (Order #{data.order_number})"
+    if data.note:
+        action_details += f" | Note: {data.note}"
+
     # Pack products: convert pack spoilage -> base bulk units and deduct from parent bulk product
     if p.base_product_id:
         base_p = db.query(models.Product).filter(models.Product.id == p.base_product_id).first()
@@ -314,11 +328,11 @@ def report_spoilage(
             raise HTTPException(status_code=400, detail="Parent bulk product not found")
         mult = p.unit_multiplier or 1.0
         deduct_qty = round(data.quantity * mult, 2)
-        note = data.note or f"Spoilage via '{p.name}': {data.quantity} packs ({deduct_qty} {base_p.unit}s) spoiled/damaged"
+        note = f"Spoilage/Broken via '{p.name}': {data.quantity} packs ({deduct_qty} {base_p.unit}s) | {action_details}"
         _log_movement(db, base_p, -deduct_qty, "spoilage", note=note, created_by=current_user.name)
     else:
         # Direct bulk / standalone product spoilage
-        note = data.note or f"Spoilage reported: -{data.quantity} {p.unit}s spoiled/damaged"
+        note = f"Spoilage/Broken reported: -{data.quantity} {p.unit}s | {action_details}"
         _log_movement(db, p, -data.quantity, "spoilage", note=note, created_by=current_user.name)
 
     db.commit()
@@ -386,3 +400,19 @@ def inventory_summary(
             for p in low_stock
         ],
     }
+
+
+@router.delete("/products/{product_id}")
+def delete_product(
+    product_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    if current_user.role not in ("admin", "manager"):
+        raise HTTPException(status_code=403, detail="Only admin/manager can delete products")
+    p = db.query(models.Product).filter(models.Product.id == product_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Product not found")
+    p.is_active = False
+    db.commit()
+    return {"message": f"Product '{p.name}' deactivated/removed successfully"}
