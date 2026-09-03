@@ -1,7 +1,7 @@
 import { NavLink, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard, Package, PlusCircle, BarChart2,
-  Bell, Users, LogOut, Leaf, Menu, X, MapPin, Boxes, ClipboardList, QrCode, FileText, Calendar, BookUser
+  Bell, Users, LogOut, Leaf, Menu, X, MapPin, Boxes, ClipboardList, QrCode, FileText, Calendar, BookUser, Wallet
 } from "lucide-react";
 import useAuth from "../store/useAuth";
 import { useState } from "react";
@@ -12,6 +12,7 @@ const navItems = [
   { to: "/orders/new",    icon: PlusCircle,      label: "New Order" },
   { to: "/subscriptions", icon: Calendar,        label: "Subscriptions" },
   { to: "/customers",     icon: BookUser,        label: "Address Book" },
+  { to: "/accounts",      icon: Wallet,          label: "Accounts" },
   { to: "/inventory",     icon: Boxes,           label: "Inventory" },
   { to: "/picklist",      icon: ClipboardList,   label: "Pick List" },
   { to: "/scan",          icon: QrCode,          label: "Scan QR" },

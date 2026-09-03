@@ -3,32 +3,22 @@ from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
-# --- Local SQLite Path configuration (Kept exactly as you had it) ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "sof.db")
+DEFAULT_DB_URL = f"sqlite:///{os.path.join(BASE_DIR, 'sof.db')}"
 
-# --- Dynamic Database URL Assignment ---
-# Check if a cloud database variable exists (Render will provide this)
-DATABASE_URL = os.getenv("DATABASE_URL")
+# Retrieve the database URL from the environment, defaulting to the local SQLite database
+DATABASE_URL = os.getenv("DATABASE_URL", DEFAULT_DB_URL)
 
-if DATABASE_URL:
-    # Ensure correct Postgres prefix required by SQLAlchemy 1.4+
-    if DATABASE_URL.startswith("postgres://"):
-        DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
-else:
-    # Fallback to your local SQLite file if running on your machine
-    DATABASE_URL = f"sqlite:///{DB_PATH}"
+# Normalize the PostgreSQL scheme prefix
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-# --- Create Engine dynamically ---
+# Apply SQLite-specific check-same-thread argument only when running SQLite
+connect_args = {}
 if "sqlite" in DATABASE_URL:
-    engine = create_engine(
-        DATABASE_URL,
-        connect_args={"check_same_thread": False}
-    )
-else:
-    engine = create_engine(DATABASE_URL)
+    connect_args["check_same_thread"] = False
 
-# --- Session & Base configuration (Kept exactly as you had it) ---
+engine = create_engine(DATABASE_URL, connect_args=connect_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -39,3 +29,4 @@ def get_db():
         yield db
     finally:
         db.close()
+

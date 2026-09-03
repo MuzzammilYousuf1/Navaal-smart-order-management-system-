@@ -133,6 +133,7 @@ def create_product(
         base_product_id=data.base_product_id,
         unit_multiplier=data.unit_multiplier,
         is_active=True,
+        is_customer_facing=data.is_customer_facing,
         created_at=datetime.utcnow(),
     )
     db.add(product)

@@ -80,14 +80,21 @@ def get_dashboard_stats(
         .scalar() or 0.0
     )
 
+    # Avg packing, pickup, and delivery calculations (database-agnostic)
+    if "sqlite" in db.bind.url.drivername:
+        epoch_rts = func.strftime('%s', models.Order.rts_at)
+        epoch_created = func.strftime('%s', models.Order.created_at)
+        epoch_pickup = func.strftime('%s', models.Order.pickup_at)
+        epoch_delivered = func.strftime('%s', models.Order.delivered_at)
+    else:
+        epoch_rts = func.extract('epoch', models.Order.rts_at)
+        epoch_created = func.extract('epoch', models.Order.created_at)
+        epoch_pickup = func.extract('epoch', models.Order.pickup_at)
+        epoch_delivered = func.extract('epoch', models.Order.delivered_at)
+
     # Avg packing time: created_at → rts_at
     avg_packing_raw = (
-        db.query(
-            func.avg(
-                func.strftime('%s', models.Order.rts_at) -
-                func.strftime('%s', models.Order.created_at)
-            )
-        )
+        db.query(func.avg(epoch_rts - epoch_created))
         .filter(
             models.Order.rts_at.isnot(None),
             models.Order.created_at >= today_start - timedelta(days=7),
@@ -97,12 +104,7 @@ def get_dashboard_stats(
 
     # Avg pickup time: rts_at → pickup_at
     avg_pickup_raw = (
-        db.query(
-            func.avg(
-                func.strftime('%s', models.Order.pickup_at) -
-                func.strftime('%s', models.Order.rts_at)
-            )
-        )
+        db.query(func.avg(epoch_pickup - epoch_rts))
         .filter(
             models.Order.pickup_at.isnot(None),
             models.Order.rts_at.isnot(None),
@@ -113,12 +115,7 @@ def get_dashboard_stats(
 
     # Avg delivery time: pickup_at → delivered_at
     avg_delivery_raw = (
-        db.query(
-            func.avg(
-                func.strftime('%s', models.Order.delivered_at) -
-                func.strftime('%s', models.Order.pickup_at)
-            )
-        )
+        db.query(func.avg(epoch_delivered - epoch_pickup))
         .filter(
             models.Order.delivered_at.isnot(None),
             models.Order.pickup_at.isnot(None),
@@ -126,6 +123,7 @@ def get_dashboard_stats(
         )
         .scalar()
     )
+
 
     return schemas.DashboardStats(
         total_today=total_today,

@@ -99,6 +99,7 @@ for p in products_catalog:
         unit_multiplier=p.get("mult", 1),
         base_product_id=base_id,
         is_active=True,
+        is_customer_facing=p.get("is_facing", True if p.get("base_sku") else False),
     )
     db.add(prod)
     db.flush()

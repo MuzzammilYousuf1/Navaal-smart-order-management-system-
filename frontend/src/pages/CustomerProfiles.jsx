@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Users, Search, Plus, RefreshCw, ShoppingCart, MapPin, Phone,
-  UserCheck, ShieldCheck, Trash2, Edit3, ArrowRight, CheckCircle, FileText
+  UserCheck, ShieldCheck, Trash2, Edit3, ArrowRight, CheckCircle, FileText,
+  Bot, BotOff, BookOpen, Download, X, DollarSign, PlusCircle
 } from "lucide-react";
-import api from "../api/client";
+import api, { API_BASE } from "../api/client";
 
 export default function CustomerProfiles() {
   const navigate = useNavigate();
@@ -25,6 +26,70 @@ export default function CustomerProfiles() {
     preferred_rider: "",
     notes: "",
   });
+
+  // Ledger Modal State
+  const [showLedger, setShowLedger] = useState(false);
+  const [ledgerCust, setLedgerCust] = useState(null);
+  const [ledgerData, setLedgerData] = useState(null);
+  const [ledgerLoading, setLedgerLoading] = useState(false);
+  const [postingLedger, setPostingLedger] = useState(false);
+  const [ledgerForm, setLedgerForm] = useState({
+    entry_type: "credit",
+    amount: "",
+    description: "",
+  });
+
+  const getAuthUrl = (path) => {
+    const token = localStorage.getItem("sof_token");
+    return `${API_BASE}${path}?token=${encodeURIComponent(token)}`;
+  };
+
+  const handleOpenLedger = async (customer) => {
+    setLedgerCust(customer);
+    setShowLedger(true);
+    setLedgerData(null);
+    setLedgerForm({ entry_type: "credit", amount: "", description: "" });
+    await fetchLedger(customer.phone);
+  };
+
+  const fetchLedger = async (phone) => {
+    setLedgerLoading(true);
+    try {
+      const res = await api.get(`/api/ledger/${phone}`);
+      setLedgerData(res.data);
+    } catch (err) {
+      console.error("Failed to fetch ledger", err);
+    } finally {
+      setLedgerLoading(false);
+    }
+  };
+
+  const handlePostLedger = async (e) => {
+    e.preventDefault();
+    if (!ledgerCust || !ledgerForm.amount) return;
+    setPostingLedger(true);
+    try {
+      await api.post("/api/ledger/entries", {
+        customer_phone: ledgerCust.phone,
+        channel: ledgerData?.channel || "b2c",
+        entry_type: ledgerForm.entry_type,
+        amount: parseFloat(ledgerForm.amount),
+        description: ledgerForm.description || "Manual adjustment",
+      });
+      showStatus("Ledger entry posted successfully!");
+      setLedgerForm({ entry_type: "credit", amount: "", description: "" });
+      fetchLedger(ledgerCust.phone);
+    } catch (err) {
+      alert(err.response?.data?.detail || "Failed to post ledger entry");
+    } finally {
+      setPostingLedger(false);
+    }
+  };
+
+  const handleDownloadLedgerPDF = () => {
+    if (!ledgerCust) return;
+    window.open(getAuthUrl(`/api/ledger/${ledgerCust.phone}/pdf`), "_blank");
+  };
 
   const showStatus = (msg) => {
     setStatusMsg(msg);
@@ -121,6 +186,32 @@ export default function CustomerProfiles() {
     navigate("/orders/new", { state: { customer } });
   };
 
+  const handleToggleAiTakeover = async (c) => {
+    if (!c.phone) {
+      alert("Customer has no phone number recorded.");
+      return;
+    }
+    const targetStatus = !c.ai_disabled;
+    const confirmMsg = targetStatus
+      ? `Activate Human Takeover for ${c.name}? AI chatbot will be muted for this number.`
+      : `Re-enable AI Chatbot for ${c.name}?`;
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      await api.post("/api/webhook/n8n/toggle-ai-takeover", null, {
+        params: {
+          phone: c.phone,
+          disable_ai: targetStatus,
+          reason: targetStatus ? "Operator Takeover from UI" : "AI Re-enabled from UI",
+        },
+      });
+      showStatus(`AI status for ${c.name} updated: ${targetStatus ? "Muted (Human Takeover Active)" : "AI Active"}`);
+      fetchCustomers(query);
+    } catch (err) {
+      alert(err.response?.data?.detail || "Failed to update AI status");
+    }
+  };
+
   return (
     <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
       {/* Header */}
@@ -207,9 +298,20 @@ export default function CustomerProfiles() {
                         <Phone className="w-3 h-3 text-brand-500" /> {c.phone || "No phone listed"}
                       </p>
                     </div>
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-brand-950 text-brand-300 border border-brand-850">
-                      {c.order_count} Orders
-                    </span>
+                    <div className="flex flex-col items-end gap-1">
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-brand-950 text-brand-300 border border-brand-850">
+                        {c.order_count} Orders
+                      </span>
+                      {c.ai_disabled ? (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-950/80 text-amber-300 border border-amber-800 flex items-center gap-1">
+                          <BotOff className="w-3 h-3" /> Human Takeover
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-800 flex items-center gap-1">
+                          <Bot className="w-3 h-3" /> AI Active
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   <div className="text-xs text-brand-400 space-y-1 pt-1 border-t border-surface-800">
@@ -246,11 +348,28 @@ export default function CustomerProfiles() {
                 <div className="flex items-center justify-between pt-3 border-t border-surface-800 gap-2">
                   <div className="flex items-center gap-1">
                     <button
+                      onClick={() => handleToggleAiTakeover(c)}
+                      className={`btn-secondary text-[11px] px-2 py-1 flex items-center gap-1 border-surface-700 ${
+                        c.ai_disabled ? "text-emerald-400 hover:text-emerald-300" : "text-amber-400 hover:text-amber-300"
+                      }`}
+                      title={c.ai_disabled ? "Re-enable AI Chatbot" : "Take over chat manually / Mute AI"}
+                    >
+                      {c.ai_disabled ? <Bot className="w-3 h-3" /> : <BotOff className="w-3 h-3" />}
+                      {c.ai_disabled ? "Enable AI" : "Takeover"}
+                    </button>
+                    <button
                       onClick={() => handleOpenEdit(c)}
                       className="btn-secondary text-[11px] px-2 py-1 border-surface-700 text-brand-400 hover:text-white"
                       title="Edit Profile"
                     >
-                      <Edit3 className="w-3 h-3" /> Edit
+                      <Edit3 className="w-3 h-3" />
+                    </button>
+                    <button
+                      onClick={() => handleOpenLedger(c)}
+                      className="btn-secondary text-[11px] px-2 py-1 border-surface-700 text-emerald-400 hover:text-emerald-300"
+                      title="View Customer Ledger & Statement"
+                    >
+                      <BookOpen className="w-3.5 h-3.5" />
                     </button>
                     <button
                       onClick={() => handleDeleteCustomer(c.id, c.name)}
@@ -274,6 +393,7 @@ export default function CustomerProfiles() {
           })}
         </div>
       )}
+
 
       {/* Add / Edit Profile Modal */}
       {showModal && (
@@ -359,6 +479,211 @@ export default function CustomerProfiles() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Ledger Modal */}
+      {showLedger && ledgerCust && (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="card w-full max-w-4xl bg-surface-900 border-surface-700 flex flex-col p-6 space-y-4 max-h-[90vh]">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-surface-800 shrink-0">
+              <div>
+                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                  <BookOpen className="w-5.5 h-5.5 text-brand-400" />
+                  Account Ledger: {ledgerCust.name}
+                </h2>
+                <p className="text-brand-500 text-xs mt-0.5 font-mono">
+                  Phone: {ledgerCust.phone} | Channel: {(ledgerData?.channel || "b2c").toUpperCase()}
+                </p>
+              </div>
+              <button
+                onClick={() => setShowLedger(false)}
+                className="text-brand-500 hover:text-white p-1 rounded-lg hover:bg-surface-800 transition-all"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Content (Scrollable) */}
+            <div className="flex-1 overflow-y-auto space-y-6 pr-1">
+              {ledgerLoading ? (
+                <div className="text-center py-12 text-brand-500 animate-pulse">
+                  Loading ledger transaction history...
+                </div>
+              ) : (
+                <>
+                  {/* Balance & Stats Cards */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="card bg-surface-850 border-surface-800 p-4 flex flex-col justify-between">
+                      <span className="text-[10px] uppercase font-bold tracking-wider text-brand-500">Total Debits</span>
+                      <span className="text-lg font-bold text-white mt-1">
+                        PKR {ledgerData?.total_debit?.toLocaleString() || "0"}
+                      </span>
+                    </div>
+                    <div className="card bg-surface-850 border-surface-800 p-4 flex flex-col justify-between">
+                      <span className="text-[10px] uppercase font-bold tracking-wider text-brand-500">Total Credits</span>
+                      <span className="text-lg font-bold text-white mt-1">
+                        PKR {ledgerData?.total_credit?.toLocaleString() || "0"}
+                      </span>
+                    </div>
+                    <div className={`card p-4 flex flex-col justify-between ${
+                      (ledgerData?.balance || 0) > 0 
+                        ? "bg-red-950/40 border-red-900/40 text-red-200" 
+                        : "bg-emerald-950/40 border-emerald-900/40 text-emerald-200"
+                    }`}>
+                      <span className="text-[10px] uppercase font-bold tracking-wider opacity-85">Outstanding Balance</span>
+                      <span className="text-lg font-extrabold mt-1">
+                        PKR {ledgerData?.balance?.toLocaleString() || "0"}
+                        <span className="text-[10px] block font-normal opacity-90 mt-0.5">
+                          {ledgerData?.balance > 0 ? "Customer owes you" : ledgerData?.balance < 0 ? "Credit Balance" : "Account Settled"}
+                        </span>
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-center">
+                      <button
+                        onClick={handleDownloadLedgerPDF}
+                        className="btn-primary w-full py-3.5 flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 font-semibold text-xs rounded-xl shadow-lg shadow-emerald-900/20"
+                      >
+                        <Download className="w-4 h-4" />
+                        Download Statement
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Transactions Table */}
+                  <div className="space-y-2">
+                    <h3 className="text-xs font-bold text-white uppercase tracking-wider text-brand-500">Transaction History</h3>
+                    <div className="border border-surface-800 rounded-xl overflow-hidden bg-surface-950">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="bg-surface-850 border-b border-surface-800 text-[10px] uppercase font-bold text-brand-400">
+                            <th className="p-3">Date</th>
+                            <th className="p-3">Description</th>
+                            <th className="p-3 text-right">Debit (+)</th>
+                            <th className="p-3 text-right">Credit (-)</th>
+                            <th className="p-3 text-right">Balance</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-surface-800 text-xs">
+                          {!ledgerData || ledgerData.entries.length === 0 ? (
+                            <tr>
+                              <td colSpan={5} className="p-6 text-center text-brand-600">
+                                No transaction records found for this account
+                              </td>
+                            </tr>
+                          ) : (
+                            (() => {
+                              let runningBalance = 0;
+                              return ledgerData.entries.map((entry) => {
+                                if (entry.entry_type === "debit") {
+                                  runningBalance += entry.amount;
+                                } else {
+                                  runningBalance -= entry.amount;
+                                }
+                                return (
+                                  <tr key={entry.id} className="hover:bg-surface-900/50 transition-colors">
+                                    <td className="p-3 text-brand-400 whitespace-nowrap">
+                                      {new Date(entry.created_at).toLocaleDateString("en-GB", {
+                                        day: "2-digit",
+                                        month: "short",
+                                        year: "numeric",
+                                      })}
+                                    </td>
+                                    <td className="p-3 text-white">
+                                      {entry.description}
+                                      {entry.related_order_id && (
+                                        <span className="text-[10px] text-brand-500 font-mono ml-2">
+                                          (ID: {entry.related_order_id})
+                                        </span>
+                                      )}
+                                    </td>
+                                    <td className="p-3 text-right text-red-400 font-semibold">
+                                      {entry.entry_type === "debit" ? `PKR ${entry.amount.toLocaleString()}` : "—"}
+                                    </td>
+                                    <td className="p-3 text-right text-emerald-400 font-semibold">
+                                      {entry.entry_type === "credit" ? `PKR ${entry.amount.toLocaleString()}` : "—"}
+                                    </td>
+                                    <td className={`p-3 text-right font-bold ${runningBalance > 0 ? "text-red-400" : "text-emerald-400"}`}>
+                                      PKR {runningBalance.toLocaleString()}
+                                    </td>
+                                  </tr>
+                                );
+                              });
+                            })()
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* Manual Entry Form */}
+                  <div className="card bg-surface-850 border-surface-800 p-4 space-y-3">
+                    <h3 className="text-xs font-bold text-white uppercase tracking-wider text-brand-500 flex items-center gap-1.5">
+                      <PlusCircle className="w-4 h-4 text-brand-500" />
+                      Add Manual Adjustment
+                    </h3>
+                    <form onSubmit={handlePostLedger} className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+                      <div>
+                        <label className="label text-[10px]">Type</label>
+                        <select
+                          className="input py-1.5 text-xs bg-surface-900 border-surface-750"
+                          value={ledgerForm.entry_type}
+                          onChange={(e) => setLedgerForm({ ...ledgerForm, entry_type: e.target.value })}
+                        >
+                          <option value="credit">Credit (Payment Received / Discount)</option>
+                          <option value="debit">Debit (Owed / Opening Balance)</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="label text-[10px]">Amount (PKR)</label>
+                        <input
+                          type="number"
+                          step="any"
+                          className="input py-1.5 text-xs bg-surface-900 border-surface-750 font-bold"
+                          placeholder="e.g. 5000"
+                          required
+                          value={ledgerForm.amount}
+                          onChange={(e) => setLedgerForm({ ...ledgerForm, amount: e.target.value })}
+                        />
+                      </div>
+                      <div className="md:col-span-2 flex gap-2 items-end">
+                        <div className="flex-1">
+                          <label className="label text-[10px]">Description</label>
+                          <input
+                            type="text"
+                            className="input py-1.5 text-xs bg-surface-900 border-surface-750"
+                            placeholder="e.g. Onboarding opening balance"
+                            required
+                            value={ledgerForm.description}
+                            onChange={(e) => setLedgerForm({ ...ledgerForm, description: e.target.value })}
+                          />
+                        </div>
+                        <button
+                          type="submit"
+                          disabled={postingLedger}
+                          className="btn-primary py-2 px-4 text-xs font-semibold shrink-0 bg-brand-600 hover:bg-brand-500 rounded-lg flex items-center gap-1"
+                        >
+                          Post Entry
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex justify-end pt-3 border-t border-surface-800 shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowLedger(false)}
+                className="btn-secondary text-xs px-4 py-2"
+              >
+                Close Statement
+              </button>
+            </div>
           </div>
         </div>
       )}

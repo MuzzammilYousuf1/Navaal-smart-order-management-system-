@@ -77,6 +77,7 @@ class OrderCreate(BaseModel):
     city: Optional[str] = None
     location_url: Optional[str] = None
     source: str = "website"
+    channel: str = "b2c"          # b2c | b2b
     priority: str = "normal"
     payment_method: Optional[str] = "cod"
     payment_status: Optional[str] = "cod"
@@ -138,6 +139,7 @@ class OrderOut(BaseModel):
     city: Optional[str]
     location_url: Optional[str] = None
     source: str
+    channel: str = "b2c"          # b2c | b2b
     status: str
     priority: str
     payment_status: str
@@ -206,6 +208,7 @@ class ProductCreate(BaseModel):
     low_stock_threshold: float = 10.0
     base_product_id: Optional[int] = None
     unit_multiplier: Optional[float] = 1.0
+    is_customer_facing: bool = False
 
 
 class ProductUpdate(BaseModel):
@@ -215,6 +218,7 @@ class ProductUpdate(BaseModel):
     unit_price: Optional[float] = None
     low_stock_threshold: Optional[float] = None
     is_active: Optional[bool] = None
+    is_customer_facing: Optional[bool] = None
     base_product_id: Optional[int] = None
     unit_multiplier: Optional[float] = None
 
@@ -242,6 +246,7 @@ class ProductOut(BaseModel):
     low_stock_threshold: float
     reorder_point: Optional[int]
     is_active: bool
+    is_customer_facing: bool = False
     created_at: datetime
     base_product_id: Optional[int] = None
     unit_multiplier: Optional[float] = 1.0
@@ -270,16 +275,28 @@ class StockMovementOut(BaseModel):
 class CustomerCreate(BaseModel):
     name: str
     phone: Optional[str] = None
+    email: Optional[str] = None
     delivery_address: Optional[str] = None
     city: Optional[str] = None
     notes: Optional[str] = None
     preferred_rider: Optional[str] = None
+    
+    # Financial profile
+    account_type: Optional[str] = "b2c"          # b2c | b2b | other
+    company_name: Optional[str] = None
+    contact_person: Optional[str] = None
+    tax_id: Optional[str] = None
+    credit_limit: Optional[float] = 0.0
+    payment_terms: Optional[str] = "cod"          # cod | net7 | net15 | net30 | net45
+    opening_balance: Optional[float] = 0.0
+    is_account_active: Optional[bool] = True
 
 
 class CustomerOut(BaseModel):
     id: int
     name: str
     phone: Optional[str]
+    email: Optional[str] = None
     delivery_address: Optional[str]
     city: Optional[str]
     notes: Optional[str]
@@ -287,6 +304,16 @@ class CustomerOut(BaseModel):
     last_items_json: Optional[str]
     last_order_total: Optional[float]
     order_count: int
+    
+    # Financial profile
+    account_type: str
+    company_name: Optional[str] = None
+    contact_person: Optional[str] = None
+    tax_id: Optional[str] = None
+    credit_limit: float
+    payment_terms: str
+    opening_balance: float
+    is_account_active: bool
     created_at: datetime
 
     class Config:
@@ -440,3 +467,90 @@ class BulkRtsRequest(BaseModel):
     order_ids: Optional[List[int]] = None
     note: Optional[str] = "Bulk RTS packaging complete"
 
+
+# ─── Ledger & Account Invoices ────────────────────────────────────────────────
+
+class AccountInvoiceLineItem(BaseModel):
+    description: str
+    qty: float
+    unit_price: float
+    total: float
+
+
+class AccountInvoiceCreate(BaseModel):
+    customer_id: int
+    invoice_type: str = "sale"  # sale | purchase | credit_note | debit_note | service
+    due_date: Optional[datetime] = None
+    discount_amount: float = 0.0
+    tax_amount: float = 0.0
+    line_items: List[AccountInvoiceLineItem] = []
+    notes: Optional[str] = None
+    payment_terms: Optional[str] = "cod"
+
+
+class AccountInvoiceOut(BaseModel):
+    id: int
+    invoice_number: str
+    customer_id: int
+    customer_phone: Optional[str]
+    invoice_type: str
+    status: str
+    issue_date: datetime
+    due_date: Optional[datetime]
+    subtotal: float
+    tax_amount: float
+    discount_amount: float
+    total_amount: float
+    amount_paid: float
+    amount_due: float
+    line_items_json: Optional[str]
+    notes: Optional[str]
+    payment_terms: Optional[str]
+    related_order_id: Optional[int]
+    created_by: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class LedgerEntryCreate(BaseModel):
+    customer_phone: str
+    channel: str = "b2c"                  # b2c | b2b
+    entry_type: str                        # debit | credit
+    amount: float
+    related_order_id: Optional[int] = None
+    account_invoice_id: Optional[int] = None
+    description: Optional[str] = None
+    payment_method: Optional[str] = None  # cash | bank_transfer | cheque | online | other
+    reference_no: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class LedgerEntryOut(BaseModel):
+    id: int
+    customer_phone: str
+    channel: str
+    entry_type: str
+    amount: float
+    related_order_id: Optional[int] = None
+    account_invoice_id: Optional[int] = None
+    description: Optional[str] = None
+    payment_method: Optional[str] = None
+    reference_no: Optional[str] = None
+    notes: Optional[str] = None
+    created_at: datetime
+    created_by: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class LedgerStatement(BaseModel):
+    customer_phone: str
+    channel: str
+    total_debit: float
+    total_credit: float
+    balance: float                         # positive = customer owes money
+    entries: List[LedgerEntryOut]

@@ -568,6 +568,15 @@ async def import_orders(
             if all(p > 0 for _, _, p in items_data):
                 total = sum(q * p for _, q, p in items_data)
 
+            # ── Determine channel (b2b / b2c) ────────────────────────────
+            # B2B Sales sheet → always b2b; otherwise derive from the "Channel"
+            # CSV column if present, falling back to b2c for retail orders.
+            if fmt == "b2b_sales":
+                channel = "b2b"
+            else:
+                raw_channel = _get(row, "channel", "source", "type")
+                channel = "b2b" if raw_channel.lower() in ("b2b",) else "b2c"
+
             # ── Create Order ──────────────────────────────────────────────
             order = models.Order(
                 order_number=order_number,
@@ -576,6 +585,7 @@ async def import_orders(
                 delivery_address=delivery_address or None,
                 city=city or None,
                 source=source,
+                channel=channel,
                 priority=priority,
                 payment_status=payment if fmt != "b2b_sales" else payment_status,
                 payment_method=payment_method if fmt == "b2b_sales" else "cod",

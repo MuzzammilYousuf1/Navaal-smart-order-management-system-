@@ -1,11 +1,14 @@
 import { useEffect, useState } from "react";
 import {
   Boxes, AlertTriangle, Plus, RefreshCw, ArrowUpRight, ArrowDownRight, PackageCheck,
-  Upload, Download, Trash2, CheckCircle, FileSpreadsheet
+  Upload, Download, Trash2, CheckCircle, FileSpreadsheet, Bot, BotOff
 } from "lucide-react";
 import api, { API_BASE } from "../api/client";
+import useAuth from "../store/useAuth";
 
 export default function Inventory() {
+  const { user } = useAuth();
+  const canManage = user?.role === "admin" || user?.role === "manager";
   const [products, setProducts] = useState([]);
   const [movements, setMovements] = useState([]);
   const [summary, setSummary] = useState(null);
@@ -215,6 +218,21 @@ export default function Inventory() {
     }
   };
 
+  const handleToggleCustomerFacing = async (p) => {
+    try {
+      await api.put(`/api/inventory/products/${p.id}`, { is_customer_facing: !p.is_customer_facing });
+      showStatus(
+        !p.is_customer_facing
+          ? `'${p.name}' is now visible to the AI agent.`
+          : `'${p.name}' hidden from AI agent.`,
+        "success"
+      );
+      fetchData();
+    } catch (err) {
+      showStatus(err.response?.data?.detail || "Toggle failed", "error");
+    }
+  };
+
   const categories = Array.from(new Set(products.map((p) => p.category).filter(Boolean)));
 
   return (
@@ -374,6 +392,9 @@ export default function Inventory() {
                   <th className="th">Unit Price</th>
                   <th className="th">Stock Level</th>
                   <th className="th">Status</th>
+                  <th className="th" title="Whether the AI chatbot (n8n) can see and sell this product">
+                    <span className="flex items-center gap-1"><Bot className="w-3.5 h-3.5 text-violet-400" /> AI Visible</span>
+                  </th>
                   <th className="th">Action</th>
                 </tr>
               </thead>
@@ -451,6 +472,29 @@ export default function Inventory() {
                           ) : (
                             <span className="px-2.5 py-1 rounded-full text-[10px] font-bold uppercase bg-emerald-900/40 text-emerald-400 border border-emerald-700/50">
                               In Stock
+                            </span>
+                          )}
+                        </td>
+                        {/* AI Visible Toggle */}
+                        <td className="td">
+                          {canManage ? (
+                            <button
+                              onClick={() => handleToggleCustomerFacing(p)}
+                              title={p.is_customer_facing ? "Click to hide from AI" : "Click to show to AI"}
+                              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-bold uppercase border transition-all ${
+                                p.is_customer_facing
+                                  ? "bg-violet-900/40 text-violet-300 border-violet-700/60 hover:bg-violet-900/70"
+                                  : "bg-surface-800 text-brand-600 border-surface-700 hover:bg-surface-700"
+                              }`}
+                            >
+                              {p.is_customer_facing ? <Bot className="w-3 h-3" /> : <BotOff className="w-3 h-3" />}
+                              {p.is_customer_facing ? "ON" : "OFF"}
+                            </button>
+                          ) : (
+                            <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${
+                              p.is_customer_facing ? "text-violet-400" : "text-brand-700"
+                            }`}>
+                              {p.is_customer_facing ? "Visible" : "Hidden"}
                             </span>
                           )}
                         </td>

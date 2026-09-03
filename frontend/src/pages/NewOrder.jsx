@@ -11,6 +11,7 @@ const DEFAULT_FORM = {
   city: "",
   location_url: "",
   source: "website",
+  channel: "b2c",
   priority: "normal",
   payment_status: "cod",
   notes: "",
@@ -32,7 +33,16 @@ export default function NewOrder() {
       .catch(() => setError("Could not load active inventory items."));
   }, []);
 
-  const setField = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const setField = (k, v) => {
+    setForm((f) => {
+      const updated = { ...f, [k]: v };
+      // Auto-derive channel whenever source changes
+      if (k === "source") {
+        updated.channel = v === "b2b" ? "b2b" : "b2c";
+      }
+      return updated;
+    });
+  };
 
   // Identify products that act as base bulk products for subitems
   const baseProductIds = new Set(products.filter((p) => p.base_product_id).map((p) => p.base_product_id));
@@ -252,6 +262,18 @@ export default function NewOrder() {
                   <option value="facebook">Facebook</option>
                   <option value="instagram">Instagram</option>
                 </select>
+              </div>
+              <div>
+                <label className="label">Channel</label>
+                <div className={`input flex items-center gap-2 cursor-default select-none ${
+                  form.channel === "b2b" ? "text-amber-300 border-amber-700/50" : "text-emerald-300 border-emerald-800/50"
+                }`}>
+                  <span className={`inline-block w-2 h-2 rounded-full ${
+                    form.channel === "b2b" ? "bg-amber-400" : "bg-emerald-400"
+                  }`} />
+                  {form.channel === "b2b" ? "B2B — Business/Mart" : "B2C — Retail Customer"}
+                </div>
+                <p className="text-xs text-brand-600 mt-1.5">Auto-set from Source. B2B is set when source is "B2B Sales".</p>
               </div>
               <div>
                 <label className="label">Priority *</label>

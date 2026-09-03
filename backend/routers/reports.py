@@ -1,13 +1,14 @@
 from typing import List, Optional
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Header
+from fastapi.security import HTTPBearer
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from database import get_db
 import models
-from auth import get_current_user
+from auth import get_current_user, bearer_scheme
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 
@@ -431,5 +432,60 @@ def get_daily_working(
         "restocks": restocks_today,
         "spoilage": spoilage_today,
     }
+
+
+@router.post("/send-email-report")
+def trigger_email_report(
+    date_str: Optional[str] = Query(None, description="Format YYYY-MM-DD"),
+    x_n8n_api_key: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+    credentials: Optional[object] = Depends(bearer_scheme) if "bearer_scheme" in globals() else Depends(HTTPBearer(auto_error=False)),
+):
+    """
+    Manually triggers sending the daily report email.
+    Authorized via n8n API Key header or active Admin/Manager dashboard login.
+    """
+    import os
+    from fastapi import HTTPException
+    from jose import jwt
+    from auth import SECRET_KEY, ALGORITHM
+
+    authorized = False
+
+    # 1. Check if X-N8N-API-KEY is provided and correct
+    n8n_key = os.getenv("N8N_API_KEY", "")
+    if n8n_key and x_n8n_api_key == n8n_key:
+        authorized = True
+
+    # 2. Check if admin credentials are provided
+    if not authorized and credentials:
+        try:
+            token = credentials.credentials
+            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            sub = payload.get("sub")
+            if sub:
+                user_id = int(sub)
+                user = db.query(models.User).filter(models.User.id == user_id).first()
+                if user and user.is_active and user.role in ["admin", "manager"]:
+                    authorized = True
+        except Exception:
+            pass
+
+    if not authorized:
+        raise HTTPException(
+            status_code=401,
+            detail="Unauthorized. Provide a valid Admin login session token or X-N8N-API-KEY header."
+        )
+
+    from email_reports import send_daily_report_email
+    success = send_daily_report_email(db, date_str=date_str)
+    if success:
+        return {"status": "success", "message": "Daily report email sent successfully"}
+    else:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to send email. Check SMTP settings in server configuration / logs."
+        )
+
 
 

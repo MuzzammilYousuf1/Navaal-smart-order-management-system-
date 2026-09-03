@@ -1,3 +1,6 @@
+import os
+import logging
+import requests as _requests
 from typing import List, Optional
 from datetime import datetime, timedelta
 
@@ -10,7 +13,37 @@ import models
 import schemas
 from auth import get_current_user
 
+logger = logging.getLogger("orders")
+
 router = APIRouter(prefix="/api/orders", tags=["orders"])
+
+
+def _notify_b2c_dispatch(order: models.Order) -> None:
+    """
+    Fire-and-forget POST to n8n when a B2C order goes out for delivery.
+    Reads N8N_OFD_WEBHOOK_URL from the environment — if unset, skips silently.
+    Wrapped in try/except so a dead n8n instance never breaks the dispatch flow.
+    """
+    url = os.getenv("N8N_OFD_WEBHOOK_URL", "").strip()
+    if not url:
+        return
+    try:
+        _requests.post(
+            url,
+            json={
+                "event": "order_out_for_delivery",
+                "order_number": order.order_number,
+                "customer_name": order.customer_name,
+                "customer_phone": order.customer_phone or "",
+                "rider_name": order.assigned_rider_name or "",
+                "total_amount": order.total_amount,
+                "channel": getattr(order, "channel", "b2c"),
+            },
+            timeout=5,
+        )
+        logger.info("n8n OFD notify sent for %s", order.order_number)
+    except Exception as exc:
+        logger.warning("n8n OFD notify failed for %s: %s", order.order_number, exc)
 
 # Valid status transitions
 TRANSITIONS = {
@@ -51,6 +84,7 @@ def create_order(
         city=data.city,
         location_url=data.location_url,
         source=data.source,
+        channel=data.channel,
         priority=data.priority,
         payment_status=pay_status,
         payment_method=pay_method,
@@ -150,6 +184,37 @@ def create_order(
     )
     db.add(history)
     db.commit()
+
+    # ── Post debit/credit ledger entries ──────────────────────────────────────
+    try:
+        from routers.ledger import post_ledger_entry
+        # 1. Debit the total order amount
+        post_ledger_entry(
+            db=db,
+            phone=order.customer_phone,
+            channel=order.channel or "b2c",
+            entry_type="debit",
+            amount=order.total_amount,
+            description=f"Order {order.order_number} created",
+            order_id=order.id,
+            created_by=current_user.name,
+        )
+        # 2. If payment was already received on creation, credit it
+        if order.amount_received and order.amount_received > 0:
+            post_ledger_entry(
+                db=db,
+                phone=order.customer_phone,
+                channel=order.channel or "b2c",
+                entry_type="credit",
+                amount=order.amount_received,
+                description=f"Upfront payment received for Order {order.order_number}",
+                order_id=order.id,
+                created_by=current_user.name,
+            )
+        db.commit()
+    except Exception as e:
+        logger.warning(f"Failed to post ledger entries for new order: {e}")
+
     db.refresh(order)
 
     # ── Auto-save customer to address book ────────────────────────────────────
@@ -434,6 +499,11 @@ def update_status(
     )
     db.add(history)
     db.commit()
+
+    # ── WhatsApp dispatch notification (B2C only, best-effort) ───────────────
+    if data.new_status == "out_for_delivery" and getattr(order, "channel", "b2c") == "b2c":
+        _notify_b2c_dispatch(order)
+
     db.refresh(order)
     return order
 
@@ -632,6 +702,11 @@ def dispatch_gate_pass(
     ))
 
     db.commit()
+
+    # ── WhatsApp dispatch notifications — one per B2C order in this gate pass ─
+    for _o in orders:
+        if getattr(_o, "channel", "b2c") == "b2c":
+            _notify_b2c_dispatch(_o)
 
     try:
         from sla_engine import broadcast_ws_message

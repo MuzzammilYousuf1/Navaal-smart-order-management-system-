@@ -22,6 +22,7 @@ import Invoices from "./pages/Invoices";
 import Subscriptions from "./pages/Subscriptions";
 import Tasks from "./pages/Tasks";
 import CustomerProfiles from "./pages/CustomerProfiles";
+import Accounts from "./pages/Accounts";
 
 function ProtectedLayout() {
   const [toasts, setToasts] = useState([]);
@@ -61,6 +62,7 @@ function ProtectedLayout() {
           <Route path="/reporting"      element={<Reports />} />
           <Route path="/subscriptions"   element={<Subscriptions />} />
           <Route path="/customers"       element={<CustomerProfiles />} />
+          <Route path="/accounts"        element={<Accounts />} />
           <Route path="/notifications"  element={<Notifications />} />
           <Route path="/users"          element={<Users />} />
           <Route path="/tasks"          element={<Tasks />} />

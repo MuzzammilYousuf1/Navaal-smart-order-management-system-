@@ -1,0 +1,52 @@
+# ── Python ─────────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pdb
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── Local secrets / databases ──────────────────────────────────────────────────
+.env
+backend/.env
+*.db
+*.db.bak*
+backend/sof.db
+backend/sof.db.bak*
+
+# ── Node / Frontend ────────────────────────────────────────────────────────────
+node_modules/
+frontend/node_modules/
+frontend/dist/       # built by Docker, not needed in context
+.npm/
+
+# ── Git / IDE ──────────────────────────────────────────────────────────────────
+.git/
+.gitignore
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Test / dev artifacts ───────────────────────────────────────────────────────
+*.test.py
+tests/
+__tests__/
+coverage/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── Uploads (large binary files — mounted as volume in production) ─────────────
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# ── Docs that don't belong in the image ───────────────────────────────────────
+README.md
+DEPLOYMENT.md
+*.md

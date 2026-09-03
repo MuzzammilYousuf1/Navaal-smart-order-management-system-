@@ -1,0 +1,15 @@
+{$API_DOMAIN} {
+    # FastAPI backend — all /api/* traffic
+    reverse_proxy backend:8000
+}
+
+{$APP_DOMAIN} {
+    # React SPA frontend
+    reverse_proxy frontend:80
+}
+
+{$N8N_DOMAIN} {
+    # n8n workflow automation — increase body limit for vision payloads
+    request_body_limit 20MB
+    reverse_proxy n8n:5678
+}

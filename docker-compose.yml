@@ -1,0 +1,120 @@
+version: '3.8'
+
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: sof-postgres
+    restart: always
+    env_file: .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-navaal_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-sof_production}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - sof-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-navaal_admin} -d ${POSTGRES_DB:-sof_production}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ── FastAPI Backend ─────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sof-backend
+    restart: always
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-navaal_admin}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-sof_production}
+    volumes:
+      - ./backend/uploads:/app/uploads
+    networks:
+      - sof-network
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # ── React Frontend ──────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: sof-frontend
+    restart: always
+    networks:
+      - sof-network
+    expose:
+      - "80"
+    depends_on:
+      - backend
+
+  # ── n8n Workflow Automation ─────────────────────────────────────────────────
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: sof-n8n
+    restart: always
+    env_file: .env
+    environment:
+      - N8N_HOST=${N8N_DOMAIN}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - WEBHOOK_URL=https://${N8N_DOMAIN}/
+      - GENERIC_TIMEZONE=Asia/Karachi
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - sof-network
+    expose:
+      - "5678"
+
+  # ── Caddy Reverse Proxy + Auto SSL ─────────────────────────────────────────
+  caddy:
+    image: caddy:2-alpine
+    container_name: sof-caddy
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    env_file: .env
+    environment:
+      - API_DOMAIN=${API_DOMAIN}
+      - APP_DOMAIN=${APP_DOMAIN}
+      - N8N_DOMAIN=${N8N_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+      - frontend
+      - n8n
+    networks:
+      - sof-network
+
+
+volumes:
+  postgres_data:
+  n8n_data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  sof-network:
+    driver: bridge

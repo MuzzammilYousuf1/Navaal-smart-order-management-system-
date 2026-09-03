@@ -1,0 +1,47 @@
+version: '3.8'
+# ── Local Development Override ─────────────────────────────────────────────────
+# Usage:  docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# What this changes vs. production:
+#  • Backend mounts source code for hot-reload (no rebuild on change).
+#  • Frontend replaced by the Vite dev server (hot-reload, HMR).
+#  • Caddy removed — backend exposed directly on :8000, frontend on :5173.
+#  • No SSL / no domain names needed — everything on localhost.
+#  • Postgres exposed on :5432 for direct DB tools access.
+
+services:
+
+  db:
+    ports:
+      - "5432:5432"   # expose Postgres for pgAdmin / psql / DBeaver
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: builder   # stops at builder stage — full dev toolchain
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./backend:/app        # live source mount
+      - /app/.venv            # keep venv from image, don't override it
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-navaal_admin}:${POSTGRES_PASSWORD:-devpassword}@db:5432/${POSTGRES_DB:-sof_production}
+
+  # Replace the static frontend service with the Vite dev server
+  frontend:
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -c "npm ci && npm run dev -- --host"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules   # preserve container's node_modules
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_URL: http://localhost:8000
+
+  # Remove Caddy in dev — not needed
+  caddy:
+    profiles: ["production"]   # opt-in only; excluded by default in dev
