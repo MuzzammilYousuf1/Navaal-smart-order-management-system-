@@ -73,7 +73,7 @@ _BOOL_COLUMNS = {
     "orders":              {"sla_alert_1_sent", "sla_alert_2_sent", "sla_manager_sent",
                             "sla_owner_sent", "is_restocked"},
     "products":            {"is_active", "is_customer_facing"},
-    "customers":           {"ai_disabled"},
+    "customers":           {"ai_disabled", "is_account_active"},
     "subscriptions":       {"is_active"},
     "tasks":               {"requires_report"},
     "chat_messages":       {"is_system_msg"},
@@ -103,7 +103,7 @@ def _coerce_row(table_name: str, row: dict) -> dict:
     bool_cols = _BOOL_COLUMNS.get(table_name, set())
     result = {}
     for col, val in row.items():
-        if col in bool_cols:
+        if col in bool_cols or col.startswith("is_") or col.startswith("has_") or col.endswith("_disabled") or col.endswith("_sent") or col.endswith("_active") or col.endswith("_report"):
             result[col] = bool(val) if val is not None else None
         elif isinstance(val, str) and (
             col.endswith("_at") or col in {"due_date", "next_delivery_date", "last_generated_at"}
@@ -174,6 +174,45 @@ def migrate():
 
         coerced_rows = [_coerce_row(table_name, dict(r)) for r in rows]
 
+        # Fetch current valid parent IDs from target Postgres DB
+        valid_ids = {}
+        with dst_engine.connect() as dst_conn:
+            for parent_tbl in ["users", "products", "customers", "orders"]:
+                if parent_tbl in dst_tables:
+                    valid_ids[parent_tbl] = set(r[0] for r in dst_conn.execute(text(f"SELECT id FROM {parent_tbl}")).all())
+                else:
+                    valid_ids[parent_tbl] = set()
+
+        # Sanitize orphaned Foreign Keys
+        sanitized_rows = []
+        for r in coerced_rows:
+            keep_row = True
+            # Sanitize order_id
+            if "order_id" in r and r["order_id"] is not None:
+                if r["order_id"] not in valid_ids["orders"]:
+                    if table_name in {"order_items", "status_history"}:
+                        keep_row = False  # NOT NULL FK requirement
+                    else:
+                        r["order_id"] = None
+            # Sanitize product_id
+            if "product_id" in r and r["product_id"] is not None:
+                if r["product_id"] not in valid_ids["products"]:
+                    keep_row = False
+            # Sanitize customer_id
+            if "customer_id" in r and r["customer_id"] is not None:
+                if r["customer_id"] not in valid_ids["customers"]:
+                    r["customer_id"] = None
+            # Sanitize user / rider / staff FKs
+            for user_fk in ["assigned_staff_id", "user_id", "rider_id", "assigned_to", "created_by_user_id"]:
+                if user_fk in r and r[user_fk] is not None:
+                    if r[user_fk] not in valid_ids["users"]:
+                        r[user_fk] = None
+
+            if keep_row:
+                sanitized_rows.append(r)
+
+        coerced_rows = sanitized_rows
+
         chunk = 500
         inserted = 0
         with dst_engine.begin() as dst_conn:
@@ -207,11 +246,12 @@ def migrate():
                 dst_conn.execute(
                     text(
                         f"SELECT setval(pg_get_serial_sequence('{table_name}', 'id'), "
-                        f"COALESCE(MAX(id), 1)) FROM {table_name}"
+                        f"COALESCE((SELECT MAX(id) FROM \"{table_name}\"), 0) + 1, false) "
+                        f"WHERE pg_get_serial_sequence('{table_name}', 'id') IS NOT NULL"
                     )
                 )
-            except Exception:
-                pass  # Table might not have an 'id' serial column
+            except Exception as e:
+                log.warning("Sequence reset skipped for %s: %s", table_name, e)
 
     if mismatches:
         log.error("Migration completed WITH ERRORS:")

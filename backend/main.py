@@ -177,6 +177,11 @@ async def lifespan(app: FastAPI):
 
     logger.info("Database tables created/verified ✓")
 
+    # Automatically sync PostgreSQL primary key sequences to MAX(id) + 1
+    from database import sync_db_sequences
+    sync_db_sequences(engine)
+    logger.info("PostgreSQL sequences synchronized ✓")
+
     # Give SLA engine access to WebSocket manager
     set_ws_manager(manager)
 

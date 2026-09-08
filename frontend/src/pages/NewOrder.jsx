@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Plus, Trash2, Package, MapPin, ExternalLink, RefreshCw, AlertCircle } from "lucide-react";
-import api from "../api/client";
+import api, { getErrorMessage } from "../api/client";
 import CustomerAutocomplete from "../components/CustomerAutocomplete";
 
 const DEFAULT_FORM = {
@@ -169,7 +169,7 @@ export default function NewOrder() {
       const { data } = await api.post("/api/orders", payload);
       navigate(`/orders/${data.id}`);
     } catch (err) {
-      setError(err.response?.data?.detail || "Failed to create order");
+      setError(getErrorMessage(err, "Failed to create order"));
     } finally {
       setLoading(false);
     }

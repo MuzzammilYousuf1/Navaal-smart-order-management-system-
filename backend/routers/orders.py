@@ -59,9 +59,29 @@ SLA_MINUTES = 45  # Pickup window after RTS
 
 
 def _generate_order_number(db: Session) -> str:
-    count = db.query(models.Order).count() + 1
     now = datetime.utcnow()
-    return f"NOF-{now.year}-{count:04d}"
+    year_prefix = f"NOF-{now.year}-"
+    existing = db.query(models.Order.order_number).filter(
+        models.Order.order_number.like(f"{year_prefix}%")
+    ).all()
+
+    max_num = 0
+    for (num_str,) in existing:
+        if num_str:
+            suffix = num_str.replace(year_prefix, "").strip()
+            try:
+                val = int(suffix)
+                if val > max_num:
+                    max_num = val
+            except ValueError:
+                pass
+
+    next_num = max_num + 1
+    candidate = f"{year_prefix}{next_num:04d}"
+    while db.query(models.Order.id).filter(models.Order.order_number == candidate).first():
+        next_num += 1
+        candidate = f"{year_prefix}{next_num:04d}"
+    return candidate
 
 
 @router.post("/", response_model=schemas.OrderOut)
@@ -75,6 +95,13 @@ def create_order(
 
     pay_method = data.payment_method or "cod"
     pay_status = data.payment_status or ("received" if (data.amount_received or 0) > 0 else "cod")
+
+    # Verify assigned staff FK
+    assigned_staff_id = current_user.id if current_user else None
+    if assigned_staff_id:
+        user_exists = db.query(models.User.id).filter(models.User.id == assigned_staff_id).first()
+        if not user_exists:
+            assigned_staff_id = None
 
     order = models.Order(
         order_number=order_number,
@@ -92,16 +119,23 @@ def create_order(
         notes=data.notes,
         assigned_rider_name=data.assigned_rider_name,
         total_amount=total,
-        assigned_staff_id=current_user.id,
+        assigned_staff_id=assigned_staff_id,
         created_at=datetime.utcnow(),
     )
     db.add(order)
     db.flush()
 
     for item_data in data.items:
+        # Verify product FK
+        product_id = item_data.product_id
+        if product_id:
+            p_exists = db.query(models.Product.id).filter(models.Product.id == product_id).first()
+            if not p_exists:
+                product_id = None
+
         item = models.OrderItem(
             order_id=order.id,
-            product_id=item_data.product_id,
+            product_id=product_id,
             product_name=item_data.product_name,
             quantity=item_data.quantity,
             unit_price=item_data.unit_price,

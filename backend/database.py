@@ -30,3 +30,33 @@ def get_db():
     finally:
         db.close()
 
+
+def sync_db_sequences(target_engine):
+    """
+    Auto-resets PostgreSQL auto-increment sequences (e.g. orders_id_seq)
+    to MAX(id) + 1 to prevent primary key collisions after manual data imports or migrations.
+    """
+    if "postgresql" not in target_engine.url.drivername and "postgres" not in target_engine.url.drivername:
+        return
+
+    from sqlalchemy import inspect, text
+    try:
+        inspector = inspect(target_engine)
+        table_names = inspector.get_table_names()
+        with target_engine.begin() as conn:
+            for tbl in table_names:
+                cols = [c["name"] for c in inspector.get_columns(tbl)]
+                if "id" in cols:
+                    sql = text(f"""
+                        SELECT setval(
+                            pg_get_serial_sequence('{tbl}', 'id'),
+                            COALESCE((SELECT MAX(id) FROM "{tbl}"), 0) + 1,
+                            false
+                        )
+                        WHERE pg_get_serial_sequence('{tbl}', 'id') IS NOT NULL;
+                    """)
+                    conn.execute(sql)
+    except Exception as exc:
+        print(f"Warning during sequence sync: {exc}")
+
+
