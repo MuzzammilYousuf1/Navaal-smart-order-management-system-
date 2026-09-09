@@ -3,8 +3,8 @@ import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend
 } from "recharts";
-import { TrendingUp, Package, CheckCircle, AlertTriangle, RefreshCw, Printer, Calendar, ShieldAlert, FileText } from "lucide-react";
-import api from "../api/client";
+import { TrendingUp, Package, CheckCircle, AlertTriangle, RefreshCw, Printer, Calendar, ShieldAlert, FileText, Mail, Download, Send, X, CheckCircle2 } from "lucide-react";
+import api, { getErrorMessage } from "../api/client";
 
 const COLORS = ["#16a34a", "#f59e0b", "#3b82f6", "#ef4444", "#64748b"];
 
@@ -37,6 +37,14 @@ export default function Reports() {
   const [selectedMonth, setSelectedMonth] = useState("2026-08");
   const [monthlyData, setMonthlyData] = useState(null);
   const [monthlyLoading, setMonthlyLoading] = useState(false);
+
+  // Email Report Modal State
+  const [showEmailModal, setShowEmailModal] = useState(false);
+  const [emailRecipient, setEmailRecipient] = useState("");
+  const [customNotes, setCustomNotes] = useState("");
+  const [isSendingEmail, setIsSendingEmail] = useState(false);
+  const [sendSuccessMsg, setSendSuccessMsg] = useState("");
+  const [sendErrorMsg, setSendErrorMsg] = useState("");
 
   const fetchAll = async () => {
     setLoading(true);
@@ -83,6 +91,52 @@ export default function Reports() {
     window.print();
   };
 
+  const handleDownloadPDF = async () => {
+    try {
+      const todayStr = new Date().toISOString().split("T")[0];
+      const res = await api.get(`/api/reports/download-pdf-report?date_str=${todayStr}`, {
+        responseType: "blob",
+      });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: "application/pdf" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", `Navaal_Operations_Report_${todayStr}.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (err) {
+      alert("Failed to download PDF report: " + getErrorMessage(err));
+    }
+  };
+
+  const handleSendEmailReport = async (e) => {
+    e.preventDefault();
+    setIsSendingEmail(true);
+    setSendSuccessMsg("");
+    setSendErrorMsg("");
+
+    try {
+      const todayStr = new Date().toISOString().split("T")[0];
+      const payload = {
+        recipient_email: emailRecipient.trim() || undefined,
+        date_str: todayStr,
+        custom_notes: customNotes.trim() || undefined,
+        include_pdf: true,
+      };
+      const res = await api.post("/api/reports/send-email-report", payload);
+      setSendSuccessMsg(res.data.message || "Daily PDF report sent successfully!");
+      setTimeout(() => {
+        setShowEmailModal(false);
+        setSendSuccessMsg("");
+        setCustomNotes("");
+      }, 2500);
+    } catch (err) {
+      setSendErrorMsg(getErrorMessage(err));
+    } finally {
+      setIsSendingEmail(false);
+    }
+  };
+
   return (
     <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
       {/* Printable CSS Rules */}
@@ -119,8 +173,8 @@ export default function Reports() {
           <h1 className="text-2xl font-bold text-white">Reports & Business Intelligence</h1>
           <p className="text-brand-500 text-sm">Monthly inventory working, spoilages, and sales analytics</p>
         </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <select className="select w-36" value={days} onChange={(e) => setDays(Number(e.target.value))}>
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+          <select className="select w-32 sm:w-36" value={days} onChange={(e) => setDays(Number(e.target.value))}>
             <option value={7}>Last 7 days</option>
             <option value={14}>Last 14 days</option>
             <option value={30}>Last 30 days</option>
@@ -128,11 +182,113 @@ export default function Reports() {
           <button onClick={fetchAll} className="btn-secondary" title="Refresh analytics">
             <RefreshCw className="w-4 h-4" />
           </button>
-          <button onClick={handlePrintReport} className="btn-primary flex items-center gap-2">
-            <Printer className="w-4 h-4" /> Print / Export PDF
+          <button onClick={handleDownloadPDF} className="btn-secondary flex items-center gap-1.5 text-xs sm:text-sm">
+            <Download className="w-4 h-4 text-emerald-400" /> PDF Download
+          </button>
+          <button onClick={() => setShowEmailModal(true)} className="btn-primary flex items-center gap-1.5 text-xs sm:text-sm bg-emerald-700 hover:bg-emerald-600 border-emerald-600">
+            <Mail className="w-4 h-4" /> Email PDF Report
+          </button>
+          <button onClick={handlePrintReport} className="btn-secondary flex items-center gap-1.5 text-xs sm:text-sm">
+            <Printer className="w-4 h-4" /> Print
           </button>
         </div>
       </div>
+
+      {/* Email PDF Modal */}
+      {showEmailModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs no-print">
+          <div className="card w-full max-w-lg space-y-4 border border-emerald-500/40 bg-surface-900 shadow-2xl relative">
+            <div className="flex items-center justify-between pb-3 border-b border-surface-800">
+              <div className="flex items-center gap-2">
+                <Mail className="w-5 h-5 text-emerald-400" />
+                <h3 className="text-lg font-bold text-white">Send PDF Operations Report</h3>
+              </div>
+              <button onClick={() => setShowEmailModal(false)} className="text-surface-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {sendSuccessMsg && (
+              <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-emerald-400 text-xs flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                <span>{sendSuccessMsg}</span>
+              </div>
+            )}
+
+            {sendErrorMsg && (
+              <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-xs flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>{sendErrorMsg}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSendEmailReport} className="space-y-4">
+              <div>
+                <label className="text-xs font-medium text-surface-300 block mb-1">
+                  Target Recipient Email Address (Leave blank to use default configured email)
+                </label>
+                <input
+                  type="email"
+                  placeholder="e.g. director@navaalfood.com"
+                  className="input w-full"
+                  value={emailRecipient}
+                  onChange={(e) => setEmailRecipient(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-surface-300 block mb-1">
+                  Executive Remarks / Custom Notes (Optional)
+                </label>
+                <textarea
+                  rows={3}
+                  placeholder="Add custom management remarks or audit observations to include in the PDF report..."
+                  className="input w-full text-xs"
+                  value={customNotes}
+                  onChange={(e) => setCustomNotes(e.target.value)}
+                />
+              </div>
+
+              <div className="p-3 bg-surface-800/80 rounded-lg border border-surface-700 text-xs text-surface-400 space-y-1">
+                <p className="font-semibold text-emerald-400">📄 PDF Report Includes:</p>
+                <ul className="list-disc pl-4 space-y-0.5">
+                  <li>Daily Order Volume & Delivered Revenue Metrics</li>
+                  <li>SLA Compliance Rate & Pipeline Breakdown</li>
+                  <li>Inventory Restocks & Spoilages Summary</li>
+                  <li>Detailed Line Item Order Log</li>
+                </ul>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowEmailModal(false)}
+                  className="btn-secondary text-xs"
+                  disabled={isSendingEmail}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSendingEmail}
+                  className="btn-primary flex items-center gap-2 text-xs bg-emerald-600 hover:bg-emerald-500"
+                >
+                  {isSendingEmail ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Sending PDF Report...
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-3.5 h-3.5" /> Send PDF Report Now
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
 
       {loading ? (
         <div className="flex items-center justify-center py-20 no-print">

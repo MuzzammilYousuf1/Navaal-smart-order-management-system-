@@ -1,15 +1,17 @@
-{$API_DOMAIN} {
-    # FastAPI backend — all /api/* traffic
-    reverse_proxy backend:8000
-}
-
 {$APP_DOMAIN} {
-    # React SPA frontend
-    reverse_proxy frontend:80
-}
+    # FastAPI backend — API routes, WebSockets, and health check
+    handle /api/* {
+        reverse_proxy backend:8000
+    }
+    handle /ws {
+        reverse_proxy backend:8000
+    }
+    handle /health {
+        reverse_proxy backend:8000
+    }
 
-{$N8N_DOMAIN} {
-    # n8n workflow automation — increase body limit for vision payloads
-    request_body_limit 20MB
-    reverse_proxy n8n:5678
+    # React SPA frontend
+    handle {
+        reverse_proxy frontend:80
+    }
 }

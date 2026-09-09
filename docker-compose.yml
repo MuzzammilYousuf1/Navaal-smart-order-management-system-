@@ -104,7 +104,6 @@ services:
     depends_on:
       - backend
       - frontend
-      - n8n
     networks:
       - sof-network
 

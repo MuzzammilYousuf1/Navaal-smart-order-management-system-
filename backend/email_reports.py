@@ -1,13 +1,21 @@
 import os
 import smtplib
 import logging
+import io
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.mime.application import MIMEApplication
 from datetime import datetime, timedelta
 from typing import Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, case
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
 
 import models
 from database import SessionLocal
@@ -22,6 +30,269 @@ SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
 SMTP_FROM_EMAIL = os.getenv("SMTP_FROM_EMAIL", "")
 REPORT_RECIPIENT_EMAIL = os.getenv("REPORT_RECIPIENT_EMAIL", "")
 REPORT_SEND_TIME = os.getenv("REPORT_SEND_TIME", "23:50")  # Default to 11:50 PM daily
+
+
+def generate_daily_report_pdf(db: Session, target_date: datetime, custom_notes: Optional[str] = None) -> bytes:
+    """
+    Generates a corporate A4 PDF report for Navaal Organic Foods using ReportLab.
+    """
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=30,
+        leftMargin=30,
+        topMargin=30,
+        bottomMargin=30
+    )
+
+    styles = getSampleStyleSheet()
+
+    title_style = ParagraphStyle(
+        'DocTitle',
+        parent=styles['Heading1'],
+        fontName='Helvetica-Bold',
+        fontSize=18,
+        leading=22,
+        textColor=colors.HexColor('#064e3b'),
+        alignment=TA_LEFT
+    )
+
+    subtitle_style = ParagraphStyle(
+        'DocSubTitle',
+        parent=styles['Normal'],
+        fontName='Helvetica-Bold',
+        fontSize=10,
+        leading=13,
+        textColor=colors.HexColor('#047857'),
+        alignment=TA_LEFT
+    )
+
+    meta_style = ParagraphStyle(
+        'MetaText',
+        parent=styles['Normal'],
+        fontName='Helvetica',
+        fontSize=8.5,
+        leading=11,
+        textColor=colors.HexColor('#475569')
+    )
+
+    section_heading = ParagraphStyle(
+        'SectionHeading',
+        parent=styles['Heading2'],
+        fontName='Helvetica-Bold',
+        fontSize=12,
+        leading=15,
+        textColor=colors.HexColor('#0f172a'),
+        spaceBefore=8,
+        spaceAfter=4
+    )
+
+    table_header_style = ParagraphStyle(
+        'TableHeader',
+        parent=styles['Normal'],
+        fontName='Helvetica-Bold',
+        fontSize=8.5,
+        leading=11,
+        textColor=colors.white,
+        alignment=TA_CENTER
+    )
+
+    table_cell_style = ParagraphStyle(
+        'TableCell',
+        parent=styles['Normal'],
+        fontName='Helvetica',
+        fontSize=8,
+        leading=10,
+        textColor=colors.HexColor('#1e293b')
+    )
+
+    table_cell_bold = ParagraphStyle(
+        'TableCellBold',
+        parent=styles['Normal'],
+        fontName='Helvetica-Bold',
+        fontSize=8,
+        leading=10,
+        textColor=colors.HexColor('#0f172a')
+    )
+
+    day_start = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end = target_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+    date_str = day_start.strftime("%A, %B %d, %Y")
+
+    # Queries
+    total_orders = db.query(func.count(models.Order.id)).filter(
+        models.Order.created_at >= day_start,
+        models.Order.created_at <= day_end
+    ).scalar() or 0
+
+    delivered_orders = db.query(func.count(models.Order.id)).filter(
+        models.Order.status == "delivered",
+        models.Order.delivered_at >= day_start,
+        models.Order.delivered_at <= day_end
+    ).scalar() or 0
+
+    revenue_today = db.query(func.sum(models.Order.total_amount)).filter(
+        models.Order.status == "delivered",
+        models.Order.delivered_at >= day_start,
+        models.Order.delivered_at <= day_end
+    ).scalar() or 0.0
+
+    total_rts = db.query(func.count(models.Order.id)).filter(
+        models.Order.created_at >= day_start,
+        models.Order.created_at <= day_end,
+        models.Order.rts_at.isnot(None)
+    ).scalar() or 0
+
+    sla_breaches = db.query(func.count(models.Order.id)).filter(
+        models.Order.created_at >= day_start,
+        models.Order.created_at <= day_end,
+        models.Order.sla_alert_1_sent == True
+    ).scalar() or 0
+
+    sla_breach_rate = round((sla_breaches / total_rts * 100), 1) if total_rts > 0 else 0.0
+    sla_compliance_rate = round(100.0 - sla_breach_rate, 1)
+
+    restocks_count = db.query(func.count(models.InventoryMovement.id)).filter(
+        models.InventoryMovement.created_at >= day_start,
+        models.InventoryMovement.created_at <= day_end,
+        models.InventoryMovement.movement_type == "restock"
+    ).scalar() or 0
+
+    spoilage_count = db.query(func.count(models.InventoryMovement.id)).filter(
+        models.InventoryMovement.created_at >= day_start,
+        models.InventoryMovement.created_at <= day_end,
+        models.InventoryMovement.movement_type.in_(["spoilage", "adjustment"])
+    ).scalar() or 0
+
+    orders = db.query(models.Order).filter(
+        models.Order.created_at >= day_start,
+        models.Order.created_at <= day_end
+    ).order_by(models.Order.created_at.desc()).all()
+
+    elements = []
+
+    # Header
+    elements.append(Paragraph("NAVAAL ORGANIC FOODS", title_style))
+    elements.append(Paragraph(f"Daily Operations & Financial Performance Audit — {date_str}", subtitle_style))
+    elements.append(Spacer(1, 6))
+
+    # Meta Info Bar
+    meta_data = [
+        [
+            Paragraph(f"<b>Report Date:</b> {date_str}", meta_style),
+            Paragraph(f"<b>Generated At:</b> {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}", meta_style),
+            Paragraph("<b>Classification:</b> Confidential Corporate Audit", meta_style),
+        ]
+    ]
+    t_meta = Table(meta_data, colWidths=[180, 180, 175])
+    t_meta.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#f0fdf4')),
+        ('PADDING', (0,0), (-1,-1), 5),
+        ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#bbf7d0')),
+    ]))
+    elements.append(t_meta)
+    elements.append(Spacer(1, 8))
+
+    # Management Remarks (Custom Notes)
+    if custom_notes:
+        notes_p = Paragraph(f"<b>Executive Remarks:</b> {custom_notes}", meta_style)
+        t_notes = Table([[notes_p]], colWidths=[535])
+        t_notes.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#fffbe6')),
+            ('PADDING', (0,0), (-1,-1), 5),
+            ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#ffe58f')),
+        ]))
+        elements.append(t_notes)
+        elements.append(Spacer(1, 8))
+
+    # KPI Summary Cards Table
+    kpi_data = [
+        [
+            Paragraph("<b>Total Orders Created</b>", meta_style), Paragraph(str(total_orders), table_cell_bold),
+            Paragraph("<b>Delivered Orders</b>", meta_style), Paragraph(str(delivered_orders), table_cell_bold)
+        ],
+        [
+            Paragraph("<b>Total Delivered Revenue</b>", meta_style), Paragraph(f"PKR {revenue_today:,.2f}", table_cell_bold),
+            Paragraph("<b>SLA Compliance Rate</b>", meta_style), Paragraph(f"{sla_compliance_rate}%", table_cell_bold)
+        ],
+        [
+            Paragraph("<b>Restock Operations</b>", meta_style), Paragraph(str(restocks_count), table_cell_bold),
+            Paragraph("<b>Spoilage / Adjustments</b>", meta_style), Paragraph(str(spoilage_count), table_cell_bold)
+        ]
+    ]
+    t_kpi = Table(kpi_data, colWidths=[140, 127, 140, 128])
+    t_kpi.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#f8fafc')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
+        ('PADDING', (0,0), (-1,-1), 5),
+    ]))
+    elements.append(Paragraph("Executive Summary & Core Metrics", section_heading))
+    elements.append(t_kpi)
+    elements.append(Spacer(1, 10))
+
+    # Status Breakdown
+    statuses = ["pending", "ready_to_ship", "out_for_delivery", "delivered", "cancelled"]
+    status_rows = [[Paragraph("<b>Order Status</b>", table_header_style), Paragraph("<b>Total Count</b>", table_header_style)]]
+    for s in statuses:
+        cnt = db.query(func.count(models.Order.id)).filter(
+            models.Order.status == s,
+            models.Order.created_at >= day_start,
+            models.Order.created_at <= day_end
+        ).scalar() or 0
+        status_rows.append([
+            Paragraph(s.replace('_', ' ').title(), table_cell_style),
+            Paragraph(str(cnt), table_cell_style)
+        ])
+    t_status = Table(status_rows, colWidths=[300, 235])
+    t_status.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#047857')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
+        ('PADDING', (0,0), (-1,-1), 4),
+    ]))
+    elements.append(Paragraph("1. Order Pipeline Status Breakdown", section_heading))
+    elements.append(t_status)
+    elements.append(Spacer(1, 10))
+
+    # Detailed Orders Log Table
+    elements.append(Paragraph("2. Detailed Order Log for Today", section_heading))
+    if not orders:
+        elements.append(Paragraph("<i>No orders recorded on this date.</i>", meta_style))
+    else:
+        order_table_data = [
+            [
+                Paragraph("<b>Order #</b>", table_header_style),
+                Paragraph("<b>Customer</b>", table_header_style),
+                Paragraph("<b>City</b>", table_header_style),
+                Paragraph("<b>Status</b>", table_header_style),
+                Paragraph("<b>Amount (PKR)</b>", table_header_style),
+            ]
+        ]
+        for o in orders[:50]:
+            order_table_data.append([
+                Paragraph(o.order_number or str(o.id), table_cell_bold),
+                Paragraph(o.customer_name or "N/A", table_cell_style),
+                Paragraph(o.city or "N/A", table_cell_style),
+                Paragraph(o.status.replace('_', ' ').title(), table_cell_style),
+                Paragraph(f"{o.total_amount:,.2f}", table_cell_style),
+            ])
+        t_orders = Table(order_table_data, colWidths=[100, 150, 95, 95, 95])
+        t_orders.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#064e3b')),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
+            ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f8fafc')]),
+            ('PADDING', (0,0), (-1,-1), 4),
+        ]))
+        elements.append(t_orders)
+
+    elements.append(Spacer(1, 10))
+    elements.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor('#cbd5e1')))
+    elements.append(Spacer(1, 4))
+    elements.append(Paragraph("<b>Smart OrderFlow OMS</b> — Official Enterprise Operations Report • PDF Document", meta_style))
+
+    doc.build(elements)
+    return buffer.getvalue()
+
 
 
 def generate_daily_report_html(db: Session, target_date: datetime) -> str:
@@ -97,9 +368,9 @@ def generate_daily_report_html(db: Session, target_date: datetime) -> str:
     rider_stats = db.query(
         models.Order.assigned_rider_name,
         func.count(models.Order.id).label("total"),
-        func.sum(func.case((models.Order.status == "delivered", 1), else_=0)).label("delivered"),
-        func.sum(func.case((models.Order.status == "out_for_delivery", 1), else_=0)).label("out_for_delivery"),
-        func.sum(func.case((models.Order.status == "delivered", models.Order.total_amount), else_=0.0)).label("cash_collected")
+        func.sum(case((models.Order.status == "delivered", 1), else_=0)).label("delivered"),
+        func.sum(case((models.Order.status == "out_for_delivery", 1), else_=0)).label("out_for_delivery"),
+        func.sum(case((models.Order.status == "delivered", models.Order.total_amount), else_=0.0)).label("cash_collected")
     ).filter(
         models.Order.assigned_rider_name.isnot(None),
         models.Order.assigned_rider_name != "",
@@ -425,13 +696,21 @@ def generate_daily_report_html(db: Session, target_date: datetime) -> str:
     return html
 
 
-def send_daily_report_email(db: Session, date_str: Optional[str] = None) -> bool:
+def send_daily_report_email(
+    db: Session,
+    date_str: Optional[str] = None,
+    custom_recipient: Optional[str] = None,
+    custom_notes: Optional[str] = None,
+    include_pdf: bool = True
+) -> bool:
     """
-    Builds and sends the daily report HTML email to the configured recipient.
+    Builds and sends the daily report email with PDF attachment to the target recipient.
     """
-    if not SMTP_HOST or not SMTP_PORT or not SMTP_USERNAME or not SMTP_PASSWORD or not SMTP_FROM_EMAIL or not REPORT_RECIPIENT_EMAIL:
+    recipient = custom_recipient.strip() if (custom_recipient and custom_recipient.strip()) else REPORT_RECIPIENT_EMAIL.strip()
+
+    if not SMTP_HOST or not SMTP_PORT or not SMTP_USERNAME or not SMTP_PASSWORD or not SMTP_FROM_EMAIL or not recipient:
         logger.warning(
-            "SMTP configuration is incomplete. Skip sending daily report email. "
+            "SMTP configuration is incomplete or recipient email missing. Skip sending daily report email. "
             "Required vars: SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM_EMAIL, REPORT_RECIPIENT_EMAIL"
         )
         return False
@@ -446,7 +725,7 @@ def send_daily_report_email(db: Session, date_str: Optional[str] = None) -> bool
         target_date = datetime.utcnow()
 
     date_label = target_date.strftime("%Y-%m-%d")
-    logger.info(f"Generating daily report email for {date_label}...")
+    logger.info(f"Generating daily report email (PDF={include_pdf}) for {date_label} to {recipient}...")
 
     try:
         html_content = generate_daily_report_html(db, target_date)
@@ -454,32 +733,48 @@ def send_daily_report_email(db: Session, date_str: Optional[str] = None) -> bool
         logger.exception(f"Failed to generate daily report HTML: {e}")
         return False
 
-    # Setup MIME Message
-    msg = MIMEMultipart("alternative")
+    pdf_bytes = None
+    if include_pdf:
+        try:
+            pdf_bytes = generate_daily_report_pdf(db, target_date, custom_notes=custom_notes)
+        except Exception as e:
+            logger.exception(f"Failed to generate PDF report attachment: {e}")
+
+    # Setup MIME Mixed Message for HTML body + PDF attachment
+    msg = MIMEMultipart("mixed")
     msg["Subject"] = f"Navaal Organic Foods - Daily Working & Operations Report [{date_label}]"
     msg["From"] = SMTP_FROM_EMAIL
-    msg["To"] = REPORT_RECIPIENT_EMAIL
+    msg["To"] = recipient
 
+    # HTML Body Part
+    body_part = MIMEMultipart("alternative")
     part_html = MIMEText(html_content, "html")
-    msg.attach(part_html)
+    body_part.attach(part_html)
+    msg.attach(body_part)
+
+    # PDF Attachment
+    if pdf_bytes:
+        pdf_attachment = MIMEApplication(pdf_bytes, _subtype="pdf")
+        pdf_attachment.add_header("Content-Disposition", "attachment", filename=f"Navaal_Operations_Report_{date_label}.pdf")
+        msg.attach(pdf_attachment)
 
     # Send via SMTP
     try:
         logger.info(f"Connecting to SMTP server {SMTP_HOST}:{SMTP_PORT}...")
         server = smtplib.SMTP(SMTP_HOST, SMTP_PORT)
         server.ehlo()
-        # If using standard STARTTLS port 587
         if SMTP_PORT == 587:
             server.starttls()
             server.ehlo()
         server.login(SMTP_USERNAME, SMTP_PASSWORD)
-        server.sendmail(SMTP_FROM_EMAIL, [REPORT_RECIPIENT_EMAIL], msg.as_string())
+        server.sendmail(SMTP_FROM_EMAIL, [recipient], msg.as_string())
         server.quit()
-        logger.info(f"Daily report email successfully sent to {REPORT_RECIPIENT_EMAIL} for {date_label}!")
+        logger.info(f"Daily report email with PDF attachment successfully sent to {recipient} for {date_label}!")
         return True
     except Exception as e:
-        logger.exception(f"Failed to send email to {REPORT_RECIPIENT_EMAIL}: {e}")
+        logger.exception(f"Failed to send report email to {recipient}: {e}")
         return False
+
 
 
 def send_daily_report_email_job():

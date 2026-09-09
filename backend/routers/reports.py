@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, Query, Header
 from fastapi.security import HTTPBearer
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, case
 
 from database import get_db
 import models
@@ -89,7 +89,7 @@ def get_by_source(
             models.Order.source,
             func.count(models.Order.id).label("count"),
             func.sum(models.Order.total_amount).label("total_revenue"),
-            func.sum(func.case((models.Order.status == "delivered", 1), else_=0)).label("delivered_count")
+            func.sum(case((models.Order.status == "delivered", 1), else_=0)).label("delivered_count")
         )
         .group_by(models.Order.source)
         .all()
@@ -118,9 +118,9 @@ def get_rider_performance(
         db.query(
             models.Order.assigned_rider_name,
             func.count(models.Order.id).label("total_orders"),
-            func.sum(func.case((models.Order.status == "delivered", 1), else_=0)).label("delivered_count"),
-            func.sum(func.case((models.Order.status == "out_for_delivery", 1), else_=0)).label("out_for_delivery_count"),
-            func.sum(func.case((models.Order.status == "delivered", models.Order.total_amount), else_=0.0)).label("cod_collected"),
+            func.sum(case((models.Order.status == "delivered", 1), else_=0)).label("delivered_count"),
+            func.sum(case((models.Order.status == "out_for_delivery", 1), else_=0)).label("out_for_delivery_count"),
+            func.sum(case((models.Order.status == "delivered", models.Order.total_amount), else_=0.0)).label("cod_collected"),
         )
         .filter(models.Order.assigned_rider_name.isnot(None), models.Order.assigned_rider_name != "")
         .group_by(models.Order.assigned_rider_name)
@@ -434,16 +434,28 @@ def get_daily_working(
     }
 
 
+from pydantic import BaseModel
+
+class EmailReportRequest(BaseModel):
+    recipient_email: Optional[str] = None
+    date_str: Optional[str] = None
+    custom_notes: Optional[str] = None
+    include_pdf: bool = True
+
+
 @router.post("/send-email-report")
 def trigger_email_report(
+    req: Optional[EmailReportRequest] = None,
     date_str: Optional[str] = Query(None, description="Format YYYY-MM-DD"),
+    recipient_email: Optional[str] = Query(None),
     x_n8n_api_key: Optional[str] = Header(None),
     db: Session = Depends(get_db),
     credentials: Optional[object] = Depends(bearer_scheme) if "bearer_scheme" in globals() else Depends(HTTPBearer(auto_error=False)),
 ):
     """
-    Manually triggers sending the daily report email.
+    Manually triggers sending the daily report email with PDF attachment.
     Authorized via n8n API Key header or active Admin/Manager dashboard login.
+    Can accept optional custom recipient_email and executive notes.
     """
     import os
     from fastapi import HTTPException
@@ -477,15 +489,63 @@ def trigger_email_report(
             detail="Unauthorized. Provide a valid Admin login session token or X-N8N-API-KEY header."
         )
 
+    # Extract params from req body or query params
+    target_date_str = (req.date_str if req and req.date_str else date_str)
+    target_recipient = (req.recipient_email if req and req.recipient_email else recipient_email)
+    custom_notes = (req.custom_notes if req else None)
+    include_pdf = (req.include_pdf if req else True)
+
     from email_reports import send_daily_report_email
-    success = send_daily_report_email(db, date_str=date_str)
+    success = send_daily_report_email(
+        db,
+        date_str=target_date_str,
+        custom_recipient=target_recipient,
+        custom_notes=custom_notes,
+        include_pdf=include_pdf
+    )
     if success:
-        return {"status": "success", "message": "Daily report email sent successfully"}
+        target_display = target_recipient if target_recipient else "default recipient"
+        return {"status": "success", "message": f"Daily PDF report email successfully sent to {target_display}!"}
     else:
         raise HTTPException(
             status_code=500,
-            detail="Failed to send email. Check SMTP settings in server configuration / logs."
+            detail="Failed to send email. Verify SMTP settings (SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM_EMAIL) in configuration."
         )
+
+
+@router.get("/download-pdf-report")
+def download_pdf_report(
+    date_str: Optional[str] = Query(None, description="Format YYYY-MM-DD"),
+    notes: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """
+    Generates and returns an instant corporate PDF report as a direct file download.
+    """
+    from fastapi.responses import Response
+    from email_reports import generate_daily_report_pdf
+
+    try:
+        if date_str:
+            target_date = datetime.strptime(date_str, "%Y-%m-%d")
+        else:
+            target_date = datetime.utcnow()
+    except Exception:
+        target_date = datetime.utcnow()
+
+    pdf_bytes = generate_daily_report_pdf(db, target_date, custom_notes=notes)
+    filename = f"Navaal_Operations_Report_{target_date.strftime('%Y-%m-%d')}.pdf"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}",
+            "Access-Control-Expose-Headers": "Content-Disposition"
+        }
+    )
+
 
 
 
