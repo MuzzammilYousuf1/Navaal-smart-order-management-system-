@@ -166,7 +166,7 @@ export default function NewOrder() {
           unit_price: Number(i.unit_price),
         })),
       };
-      const { data } = await api.post("/api/orders", payload);
+      const { data } = await api.post("/api/orders/", payload);
       navigate(`/orders/${data.id}`);
     } catch (err) {
       setError(getErrorMessage(err, "Failed to create order"));
