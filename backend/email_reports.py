@@ -23,13 +23,15 @@ from database import SessionLocal
 logger = logging.getLogger("email_reports")
 
 # --- SMTP Configuration ---
-SMTP_HOST = os.getenv("SMTP_HOST", "")
+SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com").strip()
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USERNAME = os.getenv("SMTP_USERNAME", "")
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
-SMTP_FROM_EMAIL = os.getenv("SMTP_FROM_EMAIL", "")
-REPORT_RECIPIENT_EMAIL = os.getenv("REPORT_RECIPIENT_EMAIL", "")
+SMTP_USERNAME = os.getenv("SMTP_USERNAME", "muzzammilyousuf11@gmail.com").strip()
+_raw_password = os.getenv("SMTP_PASSWORD", "ofspexlcqopwfnsa")
+SMTP_PASSWORD = _raw_password.replace(" ", "").strip()
+SMTP_FROM_EMAIL = os.getenv("SMTP_FROM_EMAIL", "muzzammilyousuf11@gmail.com").strip()
+REPORT_RECIPIENT_EMAIL = os.getenv("REPORT_RECIPIENT_EMAIL", "ukkashanavaal5@gmail.com").strip()
 REPORT_SEND_TIME = os.getenv("REPORT_SEND_TIME", "23:50")  # Default to 11:50 PM daily
+
 
 
 def generate_daily_report_pdf(db: Session, target_date: datetime, custom_notes: Optional[str] = None) -> bytes:
@@ -704,14 +706,35 @@ def send_daily_report_email(
     include_pdf: bool = True
 ) -> bool:
     """
-    Builds and sends the daily report email with PDF attachment to the target recipient.
+    Builds and sends the daily report email with PDF attachment to target recipient(s).
     """
-    recipient = custom_recipient.strip() if (custom_recipient and custom_recipient.strip()) else REPORT_RECIPIENT_EMAIL.strip()
+    recipients = []
+    if custom_recipient and custom_recipient.strip():
+        recipients = [r.strip() for r in custom_recipient.split(",") if r.strip()]
+    else:
+        if REPORT_RECIPIENT_EMAIL and REPORT_RECIPIENT_EMAIL.strip():
+            recipients.append(REPORT_RECIPIENT_EMAIL.strip())
+        
+        # Query active system user emails (admins/managers)
+        try:
+            user_emails = db.query(models.User.email).filter(
+                models.User.is_active == True,
+                models.User.email.isnot(None),
+                models.User.role.in_(["admin", "manager"])
+            ).all()
+            for u in user_emails:
+                if u.email and u.email.strip() and u.email.strip() not in recipients:
+                    recipients.append(u.email.strip())
+        except Exception as ex:
+            logger.warning(f"Could not query active user emails: {ex}")
 
-    if not SMTP_HOST or not SMTP_PORT or not SMTP_USERNAME or not SMTP_PASSWORD or not SMTP_FROM_EMAIL or not recipient:
+    if not recipients:
+        recipients = ["ukkashanavaal5@gmail.com"]
+
+    if not SMTP_HOST or not SMTP_PORT or not SMTP_USERNAME or not SMTP_PASSWORD or not SMTP_FROM_EMAIL:
         logger.warning(
-            "SMTP configuration is incomplete or recipient email missing. Skip sending daily report email. "
-            "Required vars: SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM_EMAIL, REPORT_RECIPIENT_EMAIL"
+            "SMTP configuration is incomplete. Skip sending daily report email. "
+            "Required vars: SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM_EMAIL"
         )
         return False
 
@@ -725,7 +748,8 @@ def send_daily_report_email(
         target_date = datetime.utcnow()
 
     date_label = target_date.strftime("%Y-%m-%d")
-    logger.info(f"Generating daily report email (PDF={include_pdf}) for {date_label} to {recipient}...")
+    recipients_str = ", ".join(recipients)
+    logger.info(f"Generating daily report email (PDF={include_pdf}) for {date_label} to [{recipients_str}]...")
 
     try:
         html_content = generate_daily_report_html(db, target_date)
@@ -744,7 +768,7 @@ def send_daily_report_email(
     msg = MIMEMultipart("mixed")
     msg["Subject"] = f"Navaal Organic Foods - Daily Working & Operations Report [{date_label}]"
     msg["From"] = SMTP_FROM_EMAIL
-    msg["To"] = recipient
+    msg["To"] = recipients_str
 
     # HTML Body Part
     body_part = MIMEMultipart("alternative")
@@ -760,20 +784,21 @@ def send_daily_report_email(
 
     # Send via SMTP
     try:
-        logger.info(f"Connecting to SMTP server {SMTP_HOST}:{SMTP_PORT}...")
+        logger.info(f"Connecting to SMTP server {SMTP_HOST}:{SMTP_PORT} using sender {SMTP_USERNAME}...")
         server = smtplib.SMTP(SMTP_HOST, SMTP_PORT)
         server.ehlo()
         if SMTP_PORT == 587:
             server.starttls()
             server.ehlo()
         server.login(SMTP_USERNAME, SMTP_PASSWORD)
-        server.sendmail(SMTP_FROM_EMAIL, [recipient], msg.as_string())
+        server.sendmail(SMTP_FROM_EMAIL, recipients, msg.as_string())
         server.quit()
-        logger.info(f"Daily report email with PDF attachment successfully sent to {recipient} for {date_label}!")
+        logger.info(f"Daily report email with PDF attachment successfully sent to [{recipients_str}] for {date_label}!")
         return True
     except Exception as e:
-        logger.exception(f"Failed to send report email to {recipient}: {e}")
+        logger.exception(f"Failed to send report email to [{recipients_str}]: {e}")
         return False
+
 
 
 
