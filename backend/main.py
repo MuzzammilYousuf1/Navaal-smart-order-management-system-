@@ -214,14 +214,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Configure CORS origins dynamically from the environment
-cors_origins_env = os.getenv("CORS_ORIGINS", "*")
-cors_origins = [origin.strip() for origin in cors_origins_env.split(",") if origin.strip()]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=cors_origins,
-    # Authentication uses Authorization headers rather than browser cookies.
+    allow_origins=["*"],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
