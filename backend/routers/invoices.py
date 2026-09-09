@@ -550,30 +550,41 @@ def download_receipt(
     story = []
 
     # Header
-    story.append(Paragraph(COMPANY["name"], center_bold))
-    story.append(Paragraph(COMPANY["tagline"], center_small))
-    story.append(Paragraph(COMPANY["phone"], center_small))
+    story.append(Paragraph(COMPANY.get("name", "Navaal Foods"), center_bold))
+    story.append(Paragraph(COMPANY.get("tagline", ""), center_small))
+    story.append(Paragraph(COMPANY.get("phone", ""), center_small))
     story.append(Spacer(1, 2 * mm))
     story.append(HRFlowable(width="100%", thickness=1, color=colors.black))
     story.append(Spacer(1, 2 * mm))
 
     # Order info
-    story.append(Paragraph(f"<b>Order #:</b> {order.order_number}", bold_small))
-    story.append(Paragraph(f"<b>Customer:</b> {order.customer_name}", small))
-    story.append(Paragraph(f"<b>Phone:</b> {order.customer_phone or '—'}", small))
-    story.append(Paragraph(f"<b>Address:</b> {order.delivery_address or '—'}", small))
-    story.append(Paragraph(f"<b>Rider:</b> {order.assigned_rider_name or '—'}", small))
+    order_num = order.order_number or f"NOF-{order.id}"
+    cust_name = order.customer_name or "Valued Customer"
+    cust_phone = order.customer_phone or "—"
+    cust_addr = order.delivery_address or "—"
+    rider_name = order.assigned_rider_name or "—"
+    pay_status = (order.payment_status or "COD").upper()
+    total_amt = float(order.total_amount or 0.0)
+
+    story.append(Paragraph(f"<b>Order #:</b> {order_num}", bold_small))
+    story.append(Paragraph(f"<b>Customer:</b> {cust_name}", small))
+    story.append(Paragraph(f"<b>Phone:</b> {cust_phone}", small))
+    story.append(Paragraph(f"<b>Address:</b> {cust_addr}", small))
+    story.append(Paragraph(f"<b>Rider:</b> {rider_name}", small))
     story.append(Spacer(1, 2 * mm))
     story.append(HRFlowable(width="100%", thickness=0.5, color=colors.gray, dashes=[2, 2]))
     story.append(Spacer(1, 2 * mm))
 
     # Items
     story.append(Paragraph("<b>Items:</b>", bold_small))
-    for item in order.items:
-        story.append(Paragraph(f"  {item.product_name}  x{item.quantity}  PKR {item.total_price:,.0f}", small))
+    for item in (order.items or []):
+        p_name = item.product_name or "Item"
+        p_qty = item.quantity or 1
+        p_total = float(item.total_price or (item.unit_price or 0.0) * p_qty)
+        story.append(Paragraph(f"  {p_name}  x{p_qty}  PKR {p_total:,.0f}", small))
     story.append(Spacer(1, 1 * mm))
     story.append(HRFlowable(width="100%", thickness=0.5, color=colors.gray))
-    story.append(Paragraph(f"<b>TOTAL: PKR {order.total_amount:,.0f}  ({order.payment_status.upper()})</b>", bold_small))
+    story.append(Paragraph(f"<b>TOTAL: PKR {total_amt:,.0f}  ({pay_status})</b>", bold_small))
     story.append(Spacer(1, 2 * mm))
     story.append(HRFlowable(width="100%", thickness=0.5, color=colors.gray, dashes=[2, 2]))
     story.append(Spacer(1, 2 * mm))
@@ -591,10 +602,13 @@ def download_receipt(
 
     story.append(Spacer(1, 3 * mm))
 
-    # QR code
-    qr_img = _generate_qr_image(f"SOF:{order.order_number}:{order.id}", size_mm=22)
-    story.append(qr_img)
-    story.append(Spacer(1, 2 * mm))
+    # QR code wrapped safely in try...except
+    try:
+        qr_img = _generate_qr_image(f"SOF:{order_num}:{order.id}", size_mm=22)
+        story.append(qr_img)
+        story.append(Spacer(1, 2 * mm))
+    except Exception:
+        pass
 
     # Signature line
     story.append(HRFlowable(width="100%", thickness=0.5, color=colors.gray, dashes=[2, 2]))
@@ -603,12 +617,12 @@ def download_receipt(
     story.append(Spacer(1, 2 * mm))
     story.append(HRFlowable(width="100%", thickness=1, color=colors.black))
     story.append(Paragraph("Thank you for your order!", center_small))
-    story.append(Paragraph(COMPANY["website"], center_small))
+    story.append(Paragraph(COMPANY.get("website", ""), center_small))
 
     doc.build(story)
     buf.seek(0)
 
-    filename = f"Navaal_Receipt_{order.order_number}.pdf"
+    filename = f"Navaal_Receipt_{order_num}.pdf"
     return StreamingResponse(
         buf,
         media_type="application/pdf",
