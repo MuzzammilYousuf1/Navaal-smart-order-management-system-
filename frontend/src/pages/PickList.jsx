@@ -12,7 +12,7 @@ export default function PickList() {
   const fetchPendingOrders = async () => {
     setLoading(true);
     try {
-      const { data } = await api.get("/api/orders", { params: { status: "pending", limit: 100 } });
+      const { data } = await api.get("/api/orders/", { params: { status: "pending", limit: 100 } });
       setOrders(data);
     } catch (err) {
       console.error(err);

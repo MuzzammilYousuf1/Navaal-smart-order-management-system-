@@ -30,6 +30,11 @@ export default function Reports() {
   const [riderPerf, setRiderPerf] = useState([]);
   const [sla, setSla] = useState(null);
   const [days, setDays] = useState(7);
+  const [timeframeType, setTimeframeType] = useState("preset"); // preset | single_day | custom
+  const [singleDate, setSingleDate] = useState(new Date().toISOString().split("T")[0]);
+  const [startDate, setStartDate] = useState(new Date(Date.now() - 7 * 86400000).toISOString().split("T")[0]);
+  const [endDate, setEndDate] = useState(new Date().toISOString().split("T")[0]);
+
   const [inventoryPerf, setInventoryPerf] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -49,10 +54,19 @@ export default function Reports() {
   const fetchAll = async () => {
     setLoading(true);
     try {
+      let queryParams = "";
+      if (timeframeType === "preset") {
+        queryParams = `days=${days}`;
+      } else if (timeframeType === "single_day") {
+        queryParams = `start_date=${singleDate}&end_date=${singleDate}`;
+      } else if (timeframeType === "custom") {
+        queryParams = `start_date=${startDate}&end_date=${endDate}`;
+      }
+
       const [ov, bs, bsrc, st, rp, s, ip] = await Promise.all([
-        api.get(`/api/reports/overview?days=${days}`),
-        api.get("/api/reports/by-status"),
-        api.get("/api/reports/by-source"),
+        api.get(`/api/reports/overview?${queryParams}`),
+        api.get(`/api/reports/by-status?${queryParams}`),
+        api.get(`/api/reports/by-source?${queryParams}`),
         api.get("/api/reports/staff-performance"),
         api.get("/api/reports/rider-performance"),
         api.get("/api/reports/sla-summary"),
@@ -84,7 +98,7 @@ export default function Reports() {
     }
   };
 
-  useEffect(() => { fetchAll(); }, [days]);
+  useEffect(() => { fetchAll(); }, [days, timeframeType, singleDate, startDate, endDate]);
   useEffect(() => { fetchMonthly(); }, [selectedMonth]);
 
   const handlePrintReport = () => {
@@ -93,14 +107,17 @@ export default function Reports() {
 
   const handleDownloadPDF = async () => {
     try {
-      const todayStr = new Date().toISOString().split("T")[0];
-      const res = await api.get(`/api/reports/download-pdf-report?date_str=${todayStr}`, {
+      let dateParam = new Date().toISOString().split("T")[0];
+      if (timeframeType === "single_day") dateParam = singleDate;
+      else if (timeframeType === "custom") dateParam = startDate;
+
+      const res = await api.get(`/api/reports/download-pdf-report?date_str=${dateParam}`, {
         responseType: "blob",
       });
       const url = window.URL.createObjectURL(new Blob([res.data], { type: "application/pdf" }));
       const link = document.createElement("a");
       link.href = url;
-      link.setAttribute("download", `Navaal_Operations_Report_${todayStr}.pdf`);
+      link.setAttribute("download", `Navaal_Operations_Report_${dateParam}.pdf`);
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -116,10 +133,13 @@ export default function Reports() {
     setSendErrorMsg("");
 
     try {
-      const todayStr = new Date().toISOString().split("T")[0];
+      let dateParam = new Date().toISOString().split("T")[0];
+      if (timeframeType === "single_day") dateParam = singleDate;
+      else if (timeframeType === "custom") dateParam = startDate;
+
       const payload = {
         recipient_email: emailRecipient.trim() || undefined,
-        date_str: todayStr,
+        date_str: dateParam,
         custom_notes: customNotes.trim() || undefined,
         include_pdf: true,
       };
@@ -171,14 +191,56 @@ export default function Reports() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 no-print">
         <div>
           <h1 className="text-2xl font-bold text-white">Reports & Business Intelligence</h1>
-          <p className="text-brand-500 text-sm">Monthly inventory working, spoilages, and sales analytics</p>
+          <p className="text-brand-500 text-sm">Per-day working, custom time period analytics, and spoilages audit</p>
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-          <select className="select w-32 sm:w-36" value={days} onChange={(e) => setDays(Number(e.target.value))}>
-            <option value={7}>Last 7 days</option>
-            <option value={14}>Last 14 days</option>
-            <option value={30}>Last 30 days</option>
+          {/* Timeframe Type Selector */}
+          <select
+            className="select w-32 sm:w-36"
+            value={timeframeType}
+            onChange={(e) => setTimeframeType(e.target.value)}
+          >
+            <option value="preset">Preset Range</option>
+            <option value="single_day">Per Day View</option>
+            <option value="custom">Custom Range</option>
           </select>
+
+          {/* Timeframe Specific Inputs */}
+          {timeframeType === "preset" && (
+            <select className="select w-32 sm:w-36" value={days} onChange={(e) => setDays(Number(e.target.value))}>
+              <option value={7}>Last 7 days</option>
+              <option value={14}>Last 14 days</option>
+              <option value={30}>Last 30 days</option>
+            </select>
+          )}
+
+          {timeframeType === "single_day" && (
+            <input
+              type="date"
+              className="input w-36 text-xs"
+              value={singleDate}
+              onChange={(e) => setSingleDate(e.target.value)}
+            />
+          )}
+
+          {timeframeType === "custom" && (
+            <div className="flex items-center gap-1.5 bg-surface-800 p-1 rounded-lg border border-surface-700">
+              <input
+                type="date"
+                className="input w-32 text-xs py-1 px-2"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+              />
+              <span className="text-xs text-surface-400">to</span>
+              <input
+                type="date"
+                className="input w-32 text-xs py-1 px-2"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+              />
+            </div>
+          )}
+
           <button onClick={fetchAll} className="btn-secondary" title="Refresh analytics">
             <RefreshCw className="w-4 h-4" />
           </button>
@@ -193,6 +255,7 @@ export default function Reports() {
           </button>
         </div>
       </div>
+
 
       {/* Email PDF Modal */}
       {showEmailModal && (

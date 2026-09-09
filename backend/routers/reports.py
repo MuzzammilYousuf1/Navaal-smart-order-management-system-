@@ -13,17 +13,44 @@ from auth import get_current_user, bearer_scheme
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 
 
+def _get_date_range(days: int = 7, start_date: Optional[str] = None, end_date: Optional[str] = None):
+    now = datetime.utcnow()
+    if start_date and end_date:
+        try:
+            s_dt = datetime.strptime(start_date, "%Y-%m-%d").replace(hour=0, minute=0, second=0, microsecond=0)
+            e_dt = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59, microsecond=999999)
+            return s_dt, e_dt
+        except Exception:
+            pass
+    elif start_date:
+        try:
+            s_dt = datetime.strptime(start_date, "%Y-%m-%d").replace(hour=0, minute=0, second=0, microsecond=0)
+            e_dt = s_dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+            return s_dt, e_dt
+        except Exception:
+            pass
+
+    e_dt = now.replace(hour=23, minute=59, second=59, microsecond=999999)
+    s_dt = (now - timedelta(days=max(1, days) - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return s_dt, e_dt
+
+
 @router.get("/overview")
 def get_overview(
     days: int = Query(7, ge=1, le=365),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    """Day-by-day order count and revenue for the past N days."""
-    now = datetime.utcnow()
+    """Day-by-day order count and revenue for the selected timeframe."""
+    s_dt, e_dt = _get_date_range(days, start_date, end_date)
     result = []
-    for i in range(days - 1, -1, -1):
-        day = now - timedelta(days=i)
+    
+    delta_days = (e_dt.date() - s_dt.date()).days + 1
+
+    for i in range(delta_days):
+        day = s_dt + timedelta(days=i)
         day_start = day.replace(hour=0, minute=0, second=0, microsecond=0)
         day_end = day.replace(hour=23, minute=59, second=59, microsecond=999999)
 
@@ -66,24 +93,36 @@ def get_overview(
 
 @router.get("/by-status")
 def get_by_status(
+    days: int = Query(7),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    """Order count breakdown by status."""
+    """Order count breakdown by status for selected date range."""
+    s_dt, e_dt = _get_date_range(days, start_date, end_date)
     statuses = ["pending", "ready_to_ship", "out_for_delivery", "delivered", "cancelled"]
     result = []
     for s in statuses:
-        count = db.query(func.count(models.Order.id)).filter(models.Order.status == s).scalar() or 0
+        count = (
+            db.query(func.count(models.Order.id))
+            .filter(models.Order.status == s, models.Order.created_at.between(s_dt, e_dt))
+            .scalar() or 0
+        )
         result.append({"status": s, "count": count})
     return result
 
 
 @router.get("/by-source")
 def get_by_source(
+    days: int = Query(7),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    """Order count and revenue breakdown by order source."""
+    """Order count and revenue breakdown by order source for selected date range."""
+    s_dt, e_dt = _get_date_range(days, start_date, end_date)
     results = (
         db.query(
             models.Order.source,
@@ -91,6 +130,7 @@ def get_by_source(
             func.sum(models.Order.total_amount).label("total_revenue"),
             func.sum(case((models.Order.status == "delivered", 1), else_=0)).label("delivered_count")
         )
+        .filter(models.Order.created_at.between(s_dt, e_dt))
         .group_by(models.Order.source)
         .all()
     )
@@ -106,6 +146,7 @@ def get_by_source(
             "percentage": round((r.count / total_all) * 100, 1),
         })
     return res
+
 
 
 @router.get("/rider-performance")

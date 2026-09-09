@@ -103,7 +103,7 @@ export default function Orders() {
       const params = { ...filters };
       if (search) params.search = search;
       Object.keys(params).forEach((k) => !params[k] && delete params[k]);
-      const { data } = await api.get("/api/orders", { params });
+      const { data } = await api.get("/api/orders/", { params });
       setOrders(data);
     } catch (err) {
       console.error(err);
