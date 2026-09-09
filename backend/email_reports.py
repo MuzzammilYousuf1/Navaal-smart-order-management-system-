@@ -155,17 +155,18 @@ def generate_daily_report_pdf(db: Session, target_date: datetime, custom_notes: 
     sla_breach_rate = round((sla_breaches / total_rts * 100), 1) if total_rts > 0 else 0.0
     sla_compliance_rate = round(100.0 - sla_breach_rate, 1)
 
-    restocks_count = db.query(func.count(models.InventoryMovement.id)).filter(
-        models.InventoryMovement.created_at >= day_start,
-        models.InventoryMovement.created_at <= day_end,
-        models.InventoryMovement.movement_type == "restock"
+    restocks_count = db.query(func.count(models.StockMovement.id)).filter(
+        models.StockMovement.created_at >= day_start,
+        models.StockMovement.created_at <= day_end,
+        models.StockMovement.movement_type == "restock"
     ).scalar() or 0
 
-    spoilage_count = db.query(func.count(models.InventoryMovement.id)).filter(
-        models.InventoryMovement.created_at >= day_start,
-        models.InventoryMovement.created_at <= day_end,
-        models.InventoryMovement.movement_type.in_(["spoilage", "adjustment"])
+    spoilage_count = db.query(func.count(models.StockMovement.id)).filter(
+        models.StockMovement.created_at >= day_start,
+        models.StockMovement.created_at <= day_end,
+        models.StockMovement.movement_type.in_(["spoilage", "adjustment"])
     ).scalar() or 0
+
 
     orders = db.query(models.Order).filter(
         models.Order.created_at >= day_start,
