@@ -144,10 +144,15 @@ def delete_customer(
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
 
-    # Clear Foreign Key dependencies (AccountInvoices, LedgerEntries)
-    db.query(models.AccountInvoice).filter(models.AccountInvoice.customer_id == customer_id).delete(synchronize_session=False)
+    # Clear Foreign Key dependencies (AccountInvoices, LedgerEntries, CustomerAttachments)
+    invoice_ids = [inv.id for inv in db.query(models.AccountInvoice.id).filter(models.AccountInvoice.customer_id == customer_id).all()]
+    if invoice_ids:
+        db.query(models.LedgerEntry).filter(models.LedgerEntry.account_invoice_id.in_(invoice_ids)).delete(synchronize_session=False)
     if customer.phone:
-        db.query(models.LedgerEntry).filter(models.LedgerEntry.customer_phone == customer.phone).update({models.LedgerEntry.customer_phone: None}, synchronize_session=False)
+        db.query(models.LedgerEntry).filter(models.LedgerEntry.customer_phone == customer.phone).delete(synchronize_session=False)
+        db.query(models.CustomerAttachment).filter(models.CustomerAttachment.customer_phone == customer.phone).delete(synchronize_session=False)
+
+    db.query(models.AccountInvoice).filter(models.AccountInvoice.customer_id == customer_id).delete(synchronize_session=False)
 
     db.delete(customer)
     db.commit()
