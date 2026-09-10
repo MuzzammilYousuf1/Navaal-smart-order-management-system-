@@ -312,14 +312,26 @@ export default function Reports() {
                 />
               </div>
 
-              <div className="p-3 bg-surface-800/80 rounded-lg border border-surface-700 text-xs text-surface-400 space-y-1">
-                <p className="font-semibold text-emerald-400">📄 PDF Report Includes:</p>
-                <ul className="list-disc pl-4 space-y-0.5">
-                  <li>Daily Order Volume & Delivered Revenue Metrics</li>
-                  <li>SLA Compliance Rate & Pipeline Breakdown</li>
-                  <li>Inventory Restocks & Spoilages Summary</li>
-                  <li>Detailed Line Item Order Log</li>
-                </ul>
+              <div className="p-3 bg-surface-800/80 rounded-lg border border-surface-700 text-xs text-surface-400 space-y-2">
+                <p className="font-semibold text-emerald-400">🔔 Configured Automated Email Notification Triggers:</p>
+                <div className="space-y-1.5 text-surface-300">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" defaultChecked readOnly className="rounded border-emerald-600 text-emerald-600 focus:ring-emerald-500" />
+                    <span>⚠️ <b>Low Inventory & Out-of-Stock Alerts</b> (Instant email when order exceeds available stock)</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" defaultChecked readOnly className="rounded border-emerald-600 text-emerald-600 focus:ring-emerald-500" />
+                    <span>📊 <b>Daily Nightly Operations PDF Report</b> (Sent daily at 23:50 PM)</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" defaultChecked readOnly className="rounded border-emerald-600 text-emerald-600 focus:ring-emerald-500" />
+                    <span>🚨 <b>SLA Order Delay & Escalation Alerts</b> (Sent when order exceeds 45m / 60m SLA)</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" defaultChecked readOnly className="rounded border-emerald-600 text-emerald-600 focus:ring-emerald-500" />
+                    <span>🚚 <b>Dispatch Gate Pass Summaries</b></span>
+                  </label>
+                </div>
               </div>
 
               <div className="flex justify-end gap-3 pt-2">

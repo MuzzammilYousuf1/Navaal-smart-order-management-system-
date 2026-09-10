@@ -116,11 +116,15 @@ def clear_all_data(
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Only admin can clear data")
 
-    db.query(models.StockMovement).delete()
-    db.query(models.NotificationLog).delete()
-    db.query(models.StatusHistory).delete()
-    db.query(models.OrderItem).delete()
-    db.query(models.Order).delete()
+    db.query(models.StockMovement).update({models.StockMovement.order_id: None}, synchronize_session=False)
+    db.query(models.LedgerEntry).update({models.LedgerEntry.related_order_id: None}, synchronize_session=False)
+    db.query(models.AccountInvoice).update({models.AccountInvoice.related_order_id: None}, synchronize_session=False)
+    db.query(models.CustomerAttachment).update({models.CustomerAttachment.order_id: None}, synchronize_session=False)
+    db.query(models.ChatMessage).update({models.ChatMessage.order_id: None}, synchronize_session=False)
+    db.query(models.NotificationLog).delete(synchronize_session=False)
+    db.query(models.StatusHistory).delete(synchronize_session=False)
+    db.query(models.OrderItem).delete(synchronize_session=False)
+    db.query(models.Order).delete(synchronize_session=False)
     db.commit()
     return {"message": "All orders, movements, and notifications cleared. Products kept."}
 
@@ -134,12 +138,15 @@ def clear_orders(
     if current_user.role not in ("admin", "manager"):
         raise HTTPException(status_code=403, detail="Not authorized")
 
-    db.query(models.NotificationLog).filter(
-        models.NotificationLog.order_id != None
-    ).delete(synchronize_session=False)
-    db.query(models.StatusHistory).delete()
-    db.query(models.OrderItem).delete()
-    db.query(models.Order).delete()
+    db.query(models.StockMovement).update({models.StockMovement.order_id: None}, synchronize_session=False)
+    db.query(models.LedgerEntry).update({models.LedgerEntry.related_order_id: None}, synchronize_session=False)
+    db.query(models.AccountInvoice).update({models.AccountInvoice.related_order_id: None}, synchronize_session=False)
+    db.query(models.CustomerAttachment).update({models.CustomerAttachment.order_id: None}, synchronize_session=False)
+    db.query(models.ChatMessage).update({models.ChatMessage.order_id: None}, synchronize_session=False)
+    db.query(models.NotificationLog).delete(synchronize_session=False)
+    db.query(models.StatusHistory).delete(synchronize_session=False)
+    db.query(models.OrderItem).delete(synchronize_session=False)
+    db.query(models.Order).delete(synchronize_session=False)
     db.commit()
     return {"message": "All orders cleared. Products, users, and inventory stock kept."}
 

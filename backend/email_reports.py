@@ -801,6 +801,81 @@ def send_daily_report_email(
         return False
 
 
+def send_low_stock_email_alert(db: Session, product_name: str, available_qty: float, required_qty: float, unit: str = "units") -> bool:
+    """
+    Sends an immediate email notification when an order attempt fails due to low/insufficient stock.
+    """
+    recipients = [REPORT_RECIPIENT_EMAIL] if REPORT_RECIPIENT_EMAIL else []
+    try:
+        user_emails = db.query(models.User.email).filter(
+            models.User.is_active == True,
+            models.User.email.isnot(None),
+            models.User.role.in_(["admin", "manager"])
+        ).all()
+        for u in user_emails:
+            if u.email and u.email.strip() and u.email.strip() not in recipients:
+                recipients.append(u.email.strip())
+    except Exception:
+        pass
+
+    if not recipients:
+        recipients = ["ukkashanavaal5@gmail.com"]
+
+    if not SMTP_HOST or not SMTP_PORT or not SMTP_USERNAME or not SMTP_PASSWORD or not SMTP_FROM_EMAIL:
+        return False
+
+    recipients_str = ", ".join(recipients)
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = f"⚠️ INSUFFICIENT STOCK ALERT — {product_name}"
+    msg["From"] = SMTP_FROM_EMAIL
+    msg["To"] = recipients_str
+
+    html_content = f"""
+    <html>
+    <body style="font-family: Arial, sans-serif; background-color: #f8fafc; padding: 20px;">
+        <div style="max-width: 550px; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 25px; margin: 0 auto;">
+            <h2 style="color: #dc2626; margin-top: 0;">⚠️ Out of Stock / Insufficient Inventory Alert</h2>
+            <p style="color: #334155; font-size: 14px;">An order creation request was <b>rejected</b> due to insufficient inventory stock.</p>
+            
+            <table style="width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 13px;">
+                <tr style="background-color: #f1f5f9;">
+                    <td style="padding: 8px; border: 1px solid #cbd5e1; font-weight: bold;">Product Name</td>
+                    <td style="padding: 8px; border: 1px solid #cbd5e1;">{product_name}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px; border: 1px solid #cbd5e1; font-weight: bold;">Available Stock</td>
+                    <td style="padding: 8px; border: 1px solid #cbd5e1; color: #dc2626; font-weight: bold;">{available_qty} {unit}</td>
+                </tr>
+                <tr style="background-color: #f1f5f9;">
+                    <td style="padding: 8px; border: 1px solid #cbd5e1; font-weight: bold;">Requested Quantity Needed</td>
+                    <td style="padding: 8px; border: 1px solid #cbd5e1;">{required_qty} {unit}</td>
+                </tr>
+            </table>
+
+            <p style="color: #64748b; font-size: 12px; margin-bottom: 0;">Please restock this product in the Inventory tab to re-enable order creation.</p>
+        </div>
+    </body>
+    </html>
+    """
+    msg.attach(MIMEText(html_content, "html"))
+
+    try:
+        server = smtplib.SMTP(SMTP_HOST, SMTP_PORT)
+        server.ehlo()
+        if SMTP_PORT == 587:
+            server.starttls()
+            server.ehlo()
+        server.login(SMTP_USERNAME, SMTP_PASSWORD)
+        server.sendmail(SMTP_FROM_EMAIL, recipients, msg.as_string())
+        server.quit()
+        logger.info(f"Low stock email alert sent to [{recipients_str}] for {product_name}")
+        return True
+    except Exception as e:
+        logger.exception(f"Failed to send low stock email alert: {e}")
+        return False
+
+
+
 
 
 def send_daily_report_email_job():

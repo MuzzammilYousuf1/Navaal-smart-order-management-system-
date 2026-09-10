@@ -527,9 +527,9 @@ def download_receipt(
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
-    # Use 80mm thermal receipt width (226pt ≈ 8cm)
+    # Use 80mm thermal receipt width (226pt ≈ 8cm) with generous height for auto-roll printers
     PAGE_W = 8 * cm
-    PAGE_H = 25 * cm  # auto-cut
+    PAGE_H = 60 * cm  # continuous roll height to prevent LayoutError
 
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -619,14 +619,17 @@ def download_receipt(
     story.append(Paragraph("Thank you for your order!", center_small))
     story.append(Paragraph(COMPANY.get("website", ""), center_small))
 
-    doc.build(story)
-    buf.seek(0)
+    try:
+        doc.build(story)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate receipt PDF: {str(e)}")
 
+    buf.seek(0)
     filename = f"Navaal_Receipt_{order_num}.pdf"
     return StreamingResponse(
         buf,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
     )
 
 

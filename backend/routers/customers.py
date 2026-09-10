@@ -143,9 +143,15 @@ def delete_customer(
     customer = db.query(models.Customer).filter(models.Customer.id == customer_id).first()
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
+
+    # Clear Foreign Key dependencies (AccountInvoices, LedgerEntries)
+    db.query(models.AccountInvoice).filter(models.AccountInvoice.customer_id == customer_id).delete(synchronize_session=False)
+    if customer.phone:
+        db.query(models.LedgerEntry).filter(models.LedgerEntry.customer_phone == customer.phone).update({models.LedgerEntry.customer_phone: None}, synchronize_session=False)
+
     db.delete(customer)
     db.commit()
-    return {"message": "Customer deleted"}
+    return {"message": f"Customer '{customer.name}' deleted successfully"}
 
 
 @router.post("/sync")

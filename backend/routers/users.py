@@ -76,6 +76,13 @@ def delete_user(
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+
+    # Clear Foreign Key dependencies so PostgreSQL FK constraint won't fail
+    db.query(models.Order).filter(models.Order.assigned_staff_id == user_id).update({models.Order.assigned_staff_id: None}, synchronize_session=False)
+    db.query(models.RiderLocation).filter(models.RiderLocation.rider_id == user_id).delete(synchronize_session=False)
+    db.query(models.Task).filter(models.Task.assigned_to_id == user_id).update({models.Task.assigned_to_id: None}, synchronize_session=False)
+    db.query(models.ChatMessage).filter(models.ChatMessage.sender_id == user_id).update({models.ChatMessage.sender_id: None}, synchronize_session=False)
+
     db.delete(user)
     db.commit()
-    return {"message": "User deleted"}
+    return {"message": f"User '{user.username}' deleted successfully"}

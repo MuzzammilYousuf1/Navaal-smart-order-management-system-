@@ -103,6 +103,55 @@ def create_order(
         if not user_exists:
             assigned_staff_id = None
 
+    # ── PRE-CHECK INVENTORY STOCK GUARD ─────────────────────────────────────
+    from email_reports import send_low_stock_email_alert
+    for item_data in data.items:
+        product = None
+        if item_data.product_id:
+            product = db.query(models.Product).filter(
+                models.Product.id == item_data.product_id,
+                models.Product.is_active == True,
+            ).first()
+        if not product:
+            product = db.query(models.Product).filter(
+                models.Product.name.ilike(f"%{item_data.product_name}%"),
+                models.Product.is_active == True,
+            ).first()
+
+        if product:
+            target_product = product
+            if product.base_product_id:
+                base_p = db.query(models.Product).filter(models.Product.id == product.base_product_id).first()
+                if base_p:
+                    target_product = base_p
+
+            multiplier = product.unit_multiplier or 1
+            deduct_qty = item_data.quantity * multiplier
+
+            if target_product.stock_qty < deduct_qty:
+                db.add(models.NotificationLog(
+                    notification_type="stock_warning",
+                    subject=f"INSUFFICIENT_STOCK_{target_product.sku}",
+                    recipient="Warehouse Manager",
+                    message=(
+                        f"OUT OF STOCK REJECTION: Order attempt requested {item_data.quantity}x {product.name} "
+                        f"({deduct_qty} {target_product.unit}s required) but only {target_product.stock_qty} "
+                        f"{target_product.unit}s available."
+                    ),
+                    delivery_status="logged",
+                ))
+                db.commit()
+
+                try:
+                    send_low_stock_email_alert(db, product.name, target_product.stock_qty, deduct_qty, target_product.unit or "units")
+                except Exception as ex:
+                    logger.warning("Failed to send low stock email: %s", ex)
+
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Out of Stock: Cannot place order for '{product.name}'. Only {target_product.stock_qty} {target_product.unit or 'unit'}(s) available in inventory, but {deduct_qty} required."
+                )
+
     order = models.Order(
         order_number=order_number,
         customer_name=data.customer_name,
@@ -157,7 +206,6 @@ def create_order(
             ).first()
 
         if product:
-            # If item is linked to a bulk base product (e.g. Pack of 30 -> Loose Eggs)
             target_product = product
             if product.base_product_id:
                 base_p = db.query(models.Product).filter(models.Product.id == product.base_product_id).first()
@@ -777,6 +825,18 @@ def delete_order(
     order = db.query(models.Order).filter(models.Order.id == order_id).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
+
+    # Clear Foreign Key dependencies
+    db.query(models.StockMovement).filter(models.StockMovement.order_id == order_id).update({models.StockMovement.order_id: None}, synchronize_session=False)
+    db.query(models.LedgerEntry).filter(models.LedgerEntry.related_order_id == order_id).update({models.LedgerEntry.related_order_id: None}, synchronize_session=False)
+    db.query(models.AccountInvoice).filter(models.AccountInvoice.related_order_id == order_id).update({models.AccountInvoice.related_order_id: None}, synchronize_session=False)
+    db.query(models.CustomerAttachment).filter(models.CustomerAttachment.order_id == order_id).update({models.CustomerAttachment.order_id: None}, synchronize_session=False)
+    db.query(models.ChatMessage).filter(models.ChatMessage.order_id == order_id).update({models.ChatMessage.order_id: None}, synchronize_session=False)
+    db.query(models.NotificationLog).filter(models.NotificationLog.order_id == order_id).delete(synchronize_session=False)
+    db.query(models.NotificationLog).filter(models.NotificationLog.related_order_id == order_id).update({models.NotificationLog.related_order_id: None}, synchronize_session=False)
+    db.query(models.StatusHistory).filter(models.StatusHistory.order_id == order_id).delete(synchronize_session=False)
+    db.query(models.OrderItem).filter(models.OrderItem.order_id == order_id).delete(synchronize_session=False)
+
     db.delete(order)
     db.commit()
-    return {"message": "Order deleted"}
+    return {"message": f"Order #{order.order_number} deleted successfully"}
