@@ -176,11 +176,13 @@ def scan_order_qr(
 def download_gate_pass_pdf(
     rider_name: str,
     order_ids: Optional[str] = None,
+    format: str = Query("a4", description="Format: 'a4' for summary page or 'thermal' for 80mm order slips"),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_user_via_token_or_header),
 ):
     """
-    Generate printable Gate Pass PDF for a rider with all assigned orders and total COD cash calculation.
+    Generate printable Gate Pass PDF for a rider with all assigned orders.
+    Supports 'a4' summary document and 'thermal' individual order slips.
     """
     query = db.query(models.Order).filter(models.Order.assigned_rider_name == rider_name)
     if order_ids:
@@ -197,6 +199,104 @@ def download_gate_pass_pdf(
     now = datetime.utcnow()
     gate_pass_no = orders[0].gate_pass_no or f"GP-{now.year}{now.month:02d}-{now.strftime('%H%M%S')}"
 
+    # ─── THERMAL SLIPS (80mm) ──────────────────────────────────────────────────
+    if format.lower() in ("thermal", "thermal_slips", "slip", "slips"):
+        PAGE_W = 8 * cm
+        PAGE_H = 60 * cm  # continuous roll height
+
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(
+            buf,
+            pagesize=(PAGE_W, PAGE_H),
+            rightMargin=0.3 * cm,
+            leftMargin=0.3 * cm,
+            topMargin=0.4 * cm,
+            bottomMargin=0.4 * cm,
+        )
+
+        small = ParagraphStyle("small", fontSize=7, leading=10)
+        bold_small = ParagraphStyle("bold_small", fontSize=8, leading=11, fontName="Helvetica-Bold")
+        center_small = ParagraphStyle("center_small", fontSize=7, leading=10, alignment=TA_CENTER)
+        center_bold = ParagraphStyle("center_bold", fontSize=9, leading=12, fontName="Helvetica-Bold", alignment=TA_CENTER)
+
+        story = []
+
+        for idx, o in enumerate(orders):
+            if idx > 0:
+                story.append(Spacer(1, 4 * mm))
+                story.append(HRFlowable(width="100%", thickness=0.8, color=colors.gray, dashes=[3, 3]))
+                story.append(Paragraph("<font size=6 color='#6b7280'>✂ - - - - - TEAR / CUT HERE - - - - - ✂</font>", center_small))
+                story.append(HRFlowable(width="100%", thickness=0.8, color=colors.gray, dashes=[3, 3]))
+                story.append(Spacer(1, 4 * mm))
+
+            # Header
+            story.append(Paragraph(COMPANY.get("name", "Navaal Foods"), center_bold))
+            story.append(Paragraph("<b>DISPATCH GATE PASS SLIP</b>", center_small))
+            story.append(Spacer(1, 1.5 * mm))
+            story.append(HRFlowable(width="100%", thickness=1, color=colors.black))
+            story.append(Spacer(1, 1.5 * mm))
+
+            # Info block
+            order_num = o.order_number or f"NOF-{o.id}"
+            pm = (o.payment_method or o.payment_status or "COD").upper()
+            cod_amt = float(o.total_amount or 0.0)
+            cod_str = f"PKR {cod_amt:,.0f} (COD)" if pm == "COD" else "PAID (PKR 0)"
+
+            story.append(Paragraph(f"<b>Gate Pass #:</b> {gate_pass_no}", small))
+            story.append(Paragraph(f"<b>Order #:</b> <font size=9 color='#16a34a'><b>{order_num}</b></font>", bold_small))
+            story.append(Paragraph(f"<b>Dispatch Date:</b> {_fmt_ts(now)}", small))
+            story.append(Paragraph(f"<b>Assigned Rider:</b> {rider_name}", bold_small))
+            story.append(Spacer(1, 1.5 * mm))
+            story.append(HRFlowable(width="100%", thickness=0.5, color=colors.gray, dashes=[2, 2]))
+            story.append(Spacer(1, 1.5 * mm))
+
+            story.append(Paragraph(f"<b>Customer:</b> {o.customer_name or '—'}", bold_small))
+            story.append(Paragraph(f"<b>Phone:</b> {o.customer_phone or '—'}", small))
+            story.append(Paragraph(f"<b>Address:</b> {o.delivery_address or o.city or '—'}", small))
+            story.append(Spacer(1, 1.5 * mm))
+            story.append(HRFlowable(width="100%", thickness=0.5, color=colors.gray, dashes=[2, 2]))
+            story.append(Spacer(1, 1.5 * mm))
+
+            # Items
+            story.append(Paragraph("<b>Order Items:</b>", bold_small))
+            for item in (o.items or []):
+                p_name = item.product_name or "Item"
+                p_qty = item.quantity or 1
+                p_tot = float(item.total_price or (item.unit_price or 0.0) * p_qty)
+                story.append(Paragraph(f"  {p_name}  x{p_qty}  PKR {p_tot:,.0f}", small))
+
+            story.append(Spacer(1, 1.5 * mm))
+            story.append(HRFlowable(width="100%", thickness=0.5, color=colors.gray))
+            story.append(Paragraph(f"<b>COLLECT AMOUNT: {cod_str}</b>", bold_small))
+            story.append(Spacer(1, 2 * mm))
+
+            # QR Code
+            try:
+                qr_img = _generate_qr_image(f"SOF:GATEPASS:{gate_pass_no}:{order_num}", size_mm=20)
+                story.append(qr_img)
+                story.append(Spacer(1, 1.5 * mm))
+            except Exception:
+                pass
+
+            # Signatures
+            story.append(Paragraph("Warehouse Dispatch: _________________", small))
+            story.append(Spacer(1, 1 * mm))
+            story.append(Paragraph("Gate Security Stamp: _________________", small))
+
+        try:
+            doc.build(story)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to generate Thermal Gate Pass PDF: {str(e)}")
+
+        buf.seek(0)
+        filename = f"GatePass_Thermal_{gate_pass_no}.pdf"
+        return StreamingResponse(
+            buf,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'inline; filename="{filename}"'},
+        )
+
+    # ─── A4 SUMMARY GATE PASS ─────────────────────────────────────────────────
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
         buf,
@@ -288,12 +388,16 @@ def download_gate_pass_pdf(
     ]))
     story.append(sig_table)
 
-    doc.build(story)
+    try:
+        doc.build(story)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate A4 Gate Pass PDF: {str(e)}")
+
     buf.seek(0)
     return StreamingResponse(
         buf,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="GatePass_{gate_pass_no}.pdf"'},
+        headers={"Content-Disposition": f'inline; filename="GatePass_{gate_pass_no}.pdf"'},
     )
 
 

@@ -76,10 +76,10 @@ export default function RiderGatePassModal({ isOpen, onClose, onDispatchSuccess 
     }
   };
 
-  const openPdfGatePass = () => {
+  const openPdfGatePass = (formatType = "a4") => {
     const token = localStorage.getItem("sof_token");
     const orderIdsStr = selectedOrderIds.join(",");
-    const url = `${API_BASE}/api/invoices/gate-pass/pdf?rider_name=${encodeURIComponent(selectedRider.rider_name)}&order_ids=${orderIdsStr}&token=${encodeURIComponent(token)}`;
+    const url = `${API_BASE}/api/invoices/gate-pass/pdf?rider_name=${encodeURIComponent(selectedRider.rider_name)}&order_ids=${orderIdsStr}&format=${formatType}&token=${encodeURIComponent(token)}`;
     window.open(url, "_blank");
   };
 
@@ -262,21 +262,34 @@ export default function RiderGatePassModal({ isOpen, onClose, onDispatchSuccess 
                     </div>
 
                     {successResult && (
-                      <div className="p-3 bg-emerald-900/60 border border-emerald-600 rounded-xl flex items-center justify-between text-xs text-emerald-200">
+                      <div className="p-3 bg-emerald-900/60 border border-emerald-600 rounded-xl flex items-center justify-between flex-wrap gap-2 text-xs text-emerald-200">
                         <span>Gate Pass <b>{successResult.gate_pass_no}</b> Generated! {successResult.message}</span>
-                        <button onClick={openPdfGatePass} className="btn-primary text-xs py-1 px-3 bg-emerald-600 hover:bg-emerald-500 flex items-center gap-1">
-                          <Printer className="w-3.5 h-3.5" /> Print PDF Gate Pass
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button onClick={() => openPdfGatePass("a4")} className="btn-primary text-xs py-1 px-2.5 bg-emerald-700 hover:bg-emerald-600 flex items-center gap-1">
+                            <FileText className="w-3.5 h-3.5" /> A4 Gate Pass
+                          </button>
+                          <button onClick={() => openPdfGatePass("thermal")} className="btn-primary text-xs py-1 px-2.5 bg-emerald-600 hover:bg-emerald-500 flex items-center gap-1">
+                            <Printer className="w-3.5 h-3.5" /> Thermal Slips (80mm)
+                          </button>
+                        </div>
                       </div>
                     )}
 
-                    <div className="flex justify-end gap-3 pt-1">
+                    <div className="flex justify-end items-center flex-wrap gap-2 pt-1">
                       <button
-                        onClick={openPdfGatePass}
+                        onClick={() => openPdfGatePass("a4")}
                         disabled={selectedOrderIds.length === 0}
                         className="btn-secondary text-xs flex items-center gap-1 text-brand-300 border-brand-700"
                       >
-                        <FileText className="w-4 h-4 text-emerald-400" /> Preview Gate Pass
+                        <FileText className="w-4 h-4 text-emerald-400" /> Preview A4 Summary
+                      </button>
+
+                      <button
+                        onClick={() => openPdfGatePass("thermal")}
+                        disabled={selectedOrderIds.length === 0}
+                        className="btn-secondary text-xs flex items-center gap-1 text-brand-300 border-brand-700"
+                      >
+                        <Printer className="w-4 h-4 text-amber-400" /> Thermal Slips (80mm)
                       </button>
 
                       <button
@@ -284,8 +297,8 @@ export default function RiderGatePassModal({ isOpen, onClose, onDispatchSuccess 
                         disabled={dispatching || selectedOrderIds.length === 0}
                         className="btn-primary text-xs flex items-center gap-1.5 py-2 px-4 shadow-lg shadow-brand-900/60"
                       >
-                        <Printer className="w-4 h-4" />
-                        {dispatching ? "Dispatching..." : "Generate Gate Pass & Set Out For Delivery"}
+                        <Truck className="w-4 h-4" />
+                        {dispatching ? "Dispatching..." : "Dispatch & Set Out For Delivery"}
                       </button>
                     </div>
                   </div>
