@@ -120,6 +120,7 @@ def delete_user(
     db.query(models.RiderLocation).filter(models.RiderLocation.rider_id == user_id).delete(synchronize_session=False)
     db.query(models.Task).filter(models.Task.assigned_to_id == user_id).update({models.Task.assigned_to_id: None}, synchronize_session=False)
     db.query(models.ChatMessage).filter(models.ChatMessage.sender_id == user_id).update({models.ChatMessage.sender_id: None}, synchronize_session=False)
+    db.query(models.AuditLog).filter(models.AuditLog.user_id == user_id).update({models.AuditLog.user_id: None}, synchronize_session=False)
 
     deleted_username = user.username
     deleted_name = user.name
