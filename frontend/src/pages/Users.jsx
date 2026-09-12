@@ -51,24 +51,43 @@ export default function UsersPage() {
     e.preventDefault();
     setSaving(true);
     setError("");
+
+    const cleanUsername = (form.username || "").trim().replace(/\s+/g, "_").toLowerCase();
+    const cleanName = (form.name || "").trim();
+    const cleanEmail = (form.email || "").trim();
+
+    if (!cleanUsername) {
+      setError("Username cannot be empty");
+      setSaving(false);
+      return;
+    }
+
     try {
       if (editing) {
-        const payload = { name: form.name, email: form.email, role: form.role };
+        const payload = { name: cleanName, username: cleanUsername, email: cleanEmail || null, role: form.role };
         if (form.password) payload.password = form.password;
         await api.put(`/api/users/${editing.id}`, payload);
       } else {
-        await api.post("/api/users", form);
+        const payload = {
+          name: cleanName,
+          username: cleanUsername,
+          email: cleanEmail || null,
+          password: form.password,
+          role: form.role,
+        };
+        await api.post("/api/users", payload);
       }
       setShowForm(false);
       fetch();
     } catch (err) {
-      console.error("Save user error:", err.response);
+      console.error("Save user error:", err);
       const detail = err.response?.data?.detail;
       let msg = "Save failed. Please check inputs.";
       if (typeof detail === "string") msg = detail;
       else if (Array.isArray(detail)) msg = detail.map((d) => d.msg || d.detail || JSON.stringify(d)).join(", ");
       else if (err.response?.status === 400) msg = "Bad request. Username or email may already be taken.";
       else if (err.response?.status === 403) msg = "Access denied. Only Admins/Managers can create users.";
+      else if (err.message === "Network Error") msg = "Network Error: Could not reach backend server. Ensure backend container is running.";
       else if (err.message) msg = err.message;
       setError(msg);
     } finally {

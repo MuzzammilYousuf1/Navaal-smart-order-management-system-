@@ -92,6 +92,8 @@ async def lifespan(app: FastAPI):
                 connection.exec_driver_sql(f"ALTER TABLE orders ADD COLUMN is_restocked BOOLEAN DEFAULT {bool_false}")
             if "channel" not in columns:
                 connection.exec_driver_sql("ALTER TABLE orders ADD COLUMN channel VARCHAR DEFAULT 'b2c'")
+            if "delivery_date" not in columns:
+                connection.exec_driver_sql(f"ALTER TABLE orders ADD COLUMN delivery_date {datetime_type}")
 
         # 2. Migrate products table
         if inspector.has_table("products"):
