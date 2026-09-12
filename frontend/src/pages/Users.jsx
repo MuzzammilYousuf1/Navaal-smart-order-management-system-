@@ -62,10 +62,14 @@ export default function UsersPage() {
       setShowForm(false);
       fetch();
     } catch (err) {
+      console.error("Save user error:", err.response);
       const detail = err.response?.data?.detail;
-      let msg = "Save failed";
+      let msg = "Save failed. Please check inputs.";
       if (typeof detail === "string") msg = detail;
-      else if (Array.isArray(detail)) msg = detail.map((d) => d.msg || d.detail).join(", ");
+      else if (Array.isArray(detail)) msg = detail.map((d) => d.msg || d.detail || JSON.stringify(d)).join(", ");
+      else if (err.response?.status === 400) msg = "Bad request. Username or email may already be taken.";
+      else if (err.response?.status === 403) msg = "Access denied. Only Admins/Managers can create users.";
+      else if (err.message) msg = err.message;
       setError(msg);
     } finally {
       setSaving(false);

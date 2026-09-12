@@ -25,20 +25,36 @@ def create_user(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_roles("admin", "manager")),
 ):
-    existing = db.query(models.User).filter(models.User.username == data.username).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Username already taken")
+    clean_username = (data.username or "").strip()
+    clean_name = (data.name or "").strip()
+    clean_email = (data.email or "").strip() if data.email else None
 
-    user = models.User(
-        name=data.name,
-        username=data.username,
-        email=data.email,
-        password_hash=hash_password(data.password),
-        role=data.role,
-    )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
+    if not clean_username:
+        raise HTTPException(status_code=400, detail="Username is required")
+    if not clean_name:
+        raise HTTPException(status_code=400, detail="Full name is required")
+
+    existing = db.query(models.User).filter(models.User.username.ilike(clean_username)).first()
+    if existing:
+        raise HTTPException(status_code=400, detail=f"Username '{clean_username}' is already taken. Please choose another username.")
+
+    try:
+        user = models.User(
+            name=clean_name,
+            username=clean_username,
+            email=clean_email,
+            password_hash=hash_password(data.password),
+            role=data.role,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+    except Exception as ex:
+        db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to create user: {str(ex.orig if hasattr(ex, 'orig') else ex)}"
+        )
 
     try:
         from routers.audit_log import log_action
@@ -66,11 +82,24 @@ def update_user(
     if "password" in update_data:
         update_data["password_hash"] = hash_password(update_data.pop("password"))
 
-    for field, value in update_data.items():
-        setattr(user, field, value)
+    if "username" in update_data and update_data["username"]:
+        update_data["username"] = update_data["username"].strip()
+    if "name" in update_data and update_data["name"]:
+        update_data["name"] = update_data["name"].strip()
+    if "email" in update_data and update_data["email"]:
+        update_data["email"] = update_data["email"].strip()
 
-    db.commit()
-    db.refresh(user)
+    try:
+        for field, value in update_data.items():
+            setattr(user, field, value)
+        db.commit()
+        db.refresh(user)
+    except Exception as ex:
+        db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to update user: {str(ex.orig if hasattr(ex, 'orig') else ex)}"
+        )
     return user
 
 
