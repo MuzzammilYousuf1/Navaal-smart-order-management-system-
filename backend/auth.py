@@ -13,9 +13,8 @@ from sqlalchemy.orm import Session
 from database import get_db
 import models
 
-# Set SOF_SECRET_KEY on the server in production.  A random development key
-# prevents a source-code secret from being used to forge login tokens.
-SECRET_KEY = os.getenv("SOF_SECRET_KEY") or "navaal_smart_orderflow_secret_key_2026_dev_fallback"
+# Set SOF_SECRET_KEY in production (.env). Dynamic fallback in local dev.
+SECRET_KEY = os.getenv("SOF_SECRET_KEY") or secrets.token_hex(32)
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_DAYS = 30
 

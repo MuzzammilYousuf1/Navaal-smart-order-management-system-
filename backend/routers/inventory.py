@@ -216,12 +216,18 @@ def restock_product(
     if data.quantity <= 0:
         raise HTTPException(status_code=400, detail="Quantity must be positive")
 
+    # Update product unit price if user entered a new price during restock
+    if data.unit_price is not None and data.unit_price >= 0:
+        p.unit_price = data.unit_price
+
     # Pack products: always restock the base/bulk product, converting pack qty → base qty
     # Base products: restock directly
     if p.base_product_id:
         base_p = db.query(models.Product).filter(models.Product.id == p.base_product_id).first()
         if not base_p:
             raise HTTPException(status_code=400, detail="Parent bulk product not found")
+        if data.unit_price is not None and data.unit_price >= 0:
+            base_p.unit_price = data.unit_price
         mult = p.unit_multiplier or 1.0
         change = round(data.quantity * mult, 2)  # e.g. 50 packs × 6 = 300 eggs
         note = data.note or (
@@ -235,6 +241,14 @@ def restock_product(
 
     db.commit()
     db.refresh(p)
+
+    try:
+        from routers.audit_log import log_action
+        log_action(db, current_user, "restock", "product", p.id, p.name,
+                   f"Restocked {p.name}: +{data.quantity} {p.unit}s. New stock: {p.stock_qty} {p.unit}s")
+        db.commit()
+    except Exception:
+        pass
 
     base_stocks = {x.id: x.stock_qty for x in db.query(models.Product.id, models.Product.stock_qty).all()}
     computed_qty = compute_stock_qty(p, base_stocks)
@@ -262,8 +276,6 @@ def set_stock(
             status_code=400,
             detail="Cannot set stock on a pack product — it is computed from its base product automatically."
         )
-    if data.quantity < 0:
-        raise HTTPException(status_code=400, detail="Stock cannot be negative")
 
     old_qty = p.stock_qty
     change = data.quantity - old_qty
@@ -281,6 +293,14 @@ def set_stock(
     ))
     db.commit()
     db.refresh(p)
+
+    try:
+        from routers.audit_log import log_action
+        log_action(db, current_user, "correction", "product", p.id, p.name,
+                   f"Stock corrected for {p.name}: {old_qty} → {data.quantity} {p.unit}s (delta: {change:+.1f})")
+        db.commit()
+    except Exception:
+        pass
 
     base_stocks = {x.id: x.stock_qty for x in db.query(models.Product.id, models.Product.stock_qty).all()}
     p_out = schemas.ProductOut.model_validate(p)
@@ -306,7 +326,10 @@ def report_spoilage(
     if not p:
         raise HTTPException(status_code=404, detail="Product not found")
     if data.quantity <= 0:
-        raise HTTPException(status_code=400, detail="Spoiled quantity must be positive")
+        raise HTTPException(status_code=400, detail="Quantity must be positive")
+
+    m_type = "broken" if (data.spoil_type == "broken" or data.action == "broken") else "spoiled"
+    m_label = "Broken / Damaged" if m_type == "broken" else "Spoiled / Expired"
 
     action_label = {
         "sent_in_order": "Sent with Customer Order",
@@ -314,7 +337,7 @@ def report_spoilage(
         "staff_use": "Staff / Internal Usage",
         "returned_to_supplier": "Returned to Supplier",
         "other": "Other Action",
-    }.get(data.action, data.action or "Spoilage/Broken")
+    }.get(data.action, data.action or m_label)
 
     action_details = f"Action: {action_label}"
     if data.order_number:
@@ -329,12 +352,12 @@ def report_spoilage(
             raise HTTPException(status_code=400, detail="Parent bulk product not found")
         mult = p.unit_multiplier or 1.0
         deduct_qty = round(data.quantity * mult, 2)
-        note = f"Spoilage/Broken via '{p.name}': {data.quantity} packs ({deduct_qty} {base_p.unit}s) | {action_details}"
-        _log_movement(db, base_p, -deduct_qty, "spoilage", note=note, created_by=current_user.name)
+        note = f"{m_label} via '{p.name}': {data.quantity} packs ({deduct_qty} {base_p.unit}s) | {action_details}"
+        _log_movement(db, base_p, -deduct_qty, m_type, note=note, created_by=current_user.name)
     else:
         # Direct bulk / standalone product spoilage
-        note = f"Spoilage/Broken reported: -{data.quantity} {p.unit}s | {action_details}"
-        _log_movement(db, p, -data.quantity, "spoilage", note=note, created_by=current_user.name)
+        note = f"{m_label} reported: -{data.quantity} {p.unit}s | {action_details}"
+        _log_movement(db, p, -data.quantity, m_type, note=note, created_by=current_user.name)
 
     db.commit()
     db.refresh(p)
@@ -388,6 +411,16 @@ def inventory_summary(
             out_of_stock.append(p)
         # Only count base bulk physical stock in inventory valuation (avoid double-counting subitem packs)
         if p.base_product_id is None:
+            # Normalize stored stock_qty to the price unit.
+            # unit_price is always PKR per display unit (kg for "kg", litre for "litre", g for "g", etc.)
+            # Stock is stored in the product's own unit — so no conversion needed UNLESS the unit is "g"
+            # where the user might price per kg while storing in grams.
+            # Rule: if unit is "g" → price is per gram (no conversion). If "kg" → price is per kg. Same logic.
+            # The stored qty IS in the stated unit, so value = stock_qty * unit_price always.
+            # Exception noted in user request: ghee stored as grams but displayed as kg.
+            # We now display grams→kg on the frontend. The value stays: stock_qty_in_grams * price_per_gram.
+            # However, if user enters price in PKR/kg and stores qty in grams, they need unit=kg and qty in kg.
+            # This calculation is correct as long as unit and unit_price are consistent.
             total_value += p.stock_qty * p.unit_price
 
     return {

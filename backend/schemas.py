@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Union
 from pydantic import BaseModel
 
 
@@ -83,6 +83,7 @@ class OrderCreate(BaseModel):
     payment_status: Optional[str] = "cod"
     amount_received: float = 0.0
     notes: Optional[str] = None
+    delivery_date: Optional[Union[datetime, str]] = None
     assigned_rider_name: Optional[str] = None
     items: List[OrderItemIn] = []
 
@@ -101,6 +102,7 @@ class OrderUpdate(BaseModel):
     total_amount: Optional[float] = None
     amount_received: Optional[float] = None
     notes: Optional[str] = None
+    delivery_date: Optional[Union[datetime, str]] = None
     assigned_rider_name: Optional[str] = None
     assigned_staff_id: Optional[int] = None
     items: Optional[List[OrderItemIn]] = None
@@ -152,6 +154,7 @@ class OrderOut(BaseModel):
     assigned_staff_id: Optional[int]
 
     created_at: datetime
+    delivery_date: Optional[datetime] = None
     rts_at: Optional[datetime]
     pickup_at: Optional[datetime]
     delivered_at: Optional[datetime]
@@ -225,11 +228,13 @@ class ProductUpdate(BaseModel):
 
 class RestockRequest(BaseModel):
     quantity: float
+    unit_price: Optional[float] = None
     note: Optional[str] = None
 
 
 class SpoilageRequest(BaseModel):
     quantity: float
+    spoil_type: Optional[str] = "spoiled"  # "spoiled" | "broken"
     action: Optional[str] = None       # e.g. "sent_in_order", "discarded", "staff_use", "returned_to_supplier", "other"
     order_number: Optional[str] = None # Optional order number reference if sent in order
     note: Optional[str] = None

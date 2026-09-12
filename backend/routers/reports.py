@@ -362,11 +362,13 @@ def get_monthly_inventory(
         
         received = sum(m.quantity_change for m in p_mvs if m.movement_type == "restock")
         sold = sum(abs(m.quantity_change) for m in p_mvs if m.movement_type == "sale")
-        spoiled = sum(abs(m.quantity_change) for m in p_mvs if m.movement_type in ("spoilage", "adjustment") and m.quantity_change < 0)
+        spoiled = sum(abs(m.quantity_change) for m in p_mvs if m.movement_type in ("spoilage", "spoiled", "adjustment") and m.quantity_change < 0)
+        broken = sum(abs(m.quantity_change) for m in p_mvs if m.movement_type == "broken" and m.quantity_change < 0)
 
-        spoilage_cost = round(spoiled * p.unit_price, 2)
+        spoiled_cost = round(spoiled * p.unit_price, 2)
+        broken_cost = round(broken * p.unit_price, 2)
         if p.base_product_id is None:
-            total_spoilage_cost += spoilage_cost
+            total_spoilage_cost += (spoiled_cost + broken_cost)
             total_received_units += received
             total_sold_units += sold
 
@@ -384,7 +386,10 @@ def get_monthly_inventory(
             "received_qty": received,
             "sold_qty": sold,
             "spoiled_qty": spoiled,
-            "spoilage_cost": spoilage_cost,
+            "broken_qty": broken,
+            "spoiled_cost": spoiled_cost,
+            "broken_cost": broken_cost,
+            "spoilage_cost": spoiled_cost + broken_cost,
             "current_stock": curr_qty,
             "inventory_value": round(curr_qty * p.unit_price, 2) if p.base_product_id is None else 0.0
         })

@@ -25,11 +25,11 @@ logger = logging.getLogger("email_reports")
 # --- SMTP Configuration ---
 SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com").strip()
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USERNAME = os.getenv("SMTP_USERNAME", "muzzammilyousuf11@gmail.com").strip()
-_raw_password = os.getenv("SMTP_PASSWORD", "ofspexlcqopwfnsa")
+SMTP_USERNAME = os.getenv("SMTP_USERNAME", "").strip()
+_raw_password = os.getenv("SMTP_PASSWORD", "")
 SMTP_PASSWORD = _raw_password.replace(" ", "").strip()
-SMTP_FROM_EMAIL = os.getenv("SMTP_FROM_EMAIL", "muzzammilyousuf11@gmail.com").strip()
-REPORT_RECIPIENT_EMAIL = os.getenv("REPORT_RECIPIENT_EMAIL", "ukkashanavaal5@gmail.com").strip()
+SMTP_FROM_EMAIL = os.getenv("SMTP_FROM_EMAIL", "").strip()
+REPORT_RECIPIENT_EMAIL = os.getenv("REPORT_RECIPIENT_EMAIL", "").strip()
 REPORT_SEND_TIME = os.getenv("REPORT_SEND_TIME", "23:50")  # Default to 11:50 PM daily
 
 

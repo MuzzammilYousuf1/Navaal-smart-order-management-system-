@@ -1,7 +1,7 @@
 import { NavLink, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard, Package, PlusCircle, BarChart2,
-  Bell, Users, LogOut, Leaf, Menu, X, MapPin, Boxes, ClipboardList, QrCode, FileText, Calendar, BookUser, Wallet
+  Bell, Users, LogOut, Leaf, Menu, X, MapPin, Boxes, ClipboardList, QrCode, FileText, Calendar, BookUser, Wallet, Activity
 } from "lucide-react";
 import useAuth from "../store/useAuth";
 import { useState } from "react";
@@ -22,6 +22,7 @@ const navItems = [
   { to: "/tasks",         icon: ClipboardList,   label: "Tasks & Reports" },
   { to: "/notifications", icon: Bell,            label: "Alerts" },
   { to: "/users",         icon: Users,           label: "Users" },
+  { to: "/activity",      icon: Activity,        label: "Activity Log" },
 ];
 
 export default function Sidebar({ alertCount = 0 }) {
@@ -69,7 +70,16 @@ export default function Sidebar({ alertCount = 0 }) {
 
       {/* Nav */}
       <nav className="flex-1 px-2 py-4 space-y-1 overflow-y-auto">
-        {navItems.map(({ to, icon: Icon, label }) => (
+        {navItems
+          .filter(({ to }) => {
+            const role = user?.role || "warehouse";
+            if (role === "admin" || role === "manager") return true;
+            if (role === "rider") return ["/orders", "/tracking", "/notifications"].includes(to);
+            // Warehouse & Operations
+            const restricted = ["/accounts", "/invoices", "/reporting", "/reports", "/users", "/activity"];
+            return !restricted.includes(to);
+          })
+          .map(({ to, icon: Icon, label }) => (
           <NavLink
             key={to}
             to={to}

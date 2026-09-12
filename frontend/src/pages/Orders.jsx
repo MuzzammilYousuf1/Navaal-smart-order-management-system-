@@ -385,7 +385,14 @@ export default function Orders() {
                       <span className="text-xs font-medium text-brand-300">{order.assigned_rider_name || <span className="text-brand-700">—</span>}</span>
                     </td>
                     <td className="td">
-                      {order.status === "ready_to_ship" ? (
+                      {order.delivery_date ? (
+                        <div className="space-y-0.5">
+                          <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-950/60 text-amber-300 border border-amber-800/40">
+                            📅 {format(new Date(order.delivery_date), "dd MMM")}
+                          </span>
+                          <p className="text-[10px] text-brand-600">Created: {format(new Date(order.created_at + "Z"), "dd MMM")}</p>
+                        </div>
+                      ) : order.status === "ready_to_ship" ? (
                         <LiveTimer pickupDeadline={order.pickup_deadline} status={order.status} />
                       ) : (
                         <span className="text-xs text-brand-600">

@@ -131,12 +131,12 @@ def create_order(
             if target_product.stock_qty < deduct_qty:
                 db.add(models.NotificationLog(
                     notification_type="stock_warning",
-                    subject=f"INSUFFICIENT_STOCK_{target_product.sku}",
+                    subject=f"BACKORDER_WARNING_{target_product.sku}",
                     recipient="Warehouse Manager",
                     message=(
-                        f"OUT OF STOCK REJECTION: Order attempt requested {item_data.quantity}x {product.name} "
-                        f"({deduct_qty} {target_product.unit}s required) but only {target_product.stock_qty} "
-                        f"{target_product.unit}s available."
+                        f"BACKORDER NOTICE: Order requested {item_data.quantity}x {product.name} "
+                        f"({deduct_qty} {target_product.unit}s required). Current stock is {target_product.stock_qty} "
+                        f"{target_product.unit}s. Stock will drop into negative."
                     ),
                     delivery_status="logged",
                 ))
@@ -147,10 +147,16 @@ def create_order(
                 except Exception as ex:
                     logger.warning("Failed to send low stock email: %s", ex)
 
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Out of Stock: Cannot place order for '{product.name}'. Only {target_product.stock_qty} {target_product.unit or 'unit'}(s) available in inventory, but {deduct_qty} required."
-                )
+    # Parse delivery_date if provided
+    deliv_dt = None
+    if data.delivery_date:
+        if isinstance(data.delivery_date, str):
+            try:
+                deliv_dt = datetime.fromisoformat(data.delivery_date.replace("Z", "+00:00"))
+            except Exception:
+                deliv_dt = None
+        elif isinstance(data.delivery_date, datetime):
+            deliv_dt = data.delivery_date
 
     order = models.Order(
         order_number=order_number,
@@ -166,6 +172,7 @@ def create_order(
         payment_method=pay_method,
         amount_received=data.amount_received or 0.0,
         notes=data.notes,
+        delivery_date=deliv_dt,
         assigned_rider_name=data.assigned_rider_name,
         total_amount=total,
         assigned_staff_id=assigned_staff_id,
@@ -192,7 +199,7 @@ def create_order(
         )
         db.add(item)
 
-        # ── Auto-deduct stock from inventory ──────────────────────────────────
+        # ── Auto-deduct stock from inventory (allows negative stock / backorder) ─────
         product = None
         if item_data.product_id:
             product = db.query(models.Product).filter(
@@ -215,43 +222,30 @@ def create_order(
             multiplier = product.unit_multiplier or 1
             deduct_qty = item_data.quantity * multiplier
 
-            if target_product.stock_qty >= deduct_qty:
-                target_product.stock_qty -= deduct_qty
-                movement = models.StockMovement(
-                    product_id=target_product.id,
-                    order_id=order.id,
-                    movement_type="sale",
-                    quantity_change=-deduct_qty,
-                    quantity_after=target_product.stock_qty,
-                    note=f"Sold {item_data.quantity}x {product.name} ({multiplier} units/pack) via Order {order_number}",
-                    created_by=current_user.name,
-                    created_at=datetime.utcnow(),
-                )
-                db.add(movement)
+            target_product.stock_qty -= deduct_qty
+            movement = models.StockMovement(
+                product_id=target_product.id,
+                order_id=order.id,
+                movement_type="sale",
+                quantity_change=-deduct_qty,
+                quantity_after=target_product.stock_qty,
+                note=f"Sold {item_data.quantity}x {product.name} ({multiplier} units/pack) via Order {order_number}",
+                created_by=current_user.name,
+                created_at=datetime.utcnow(),
+            )
+            db.add(movement)
 
-                # Low stock alert
-                if target_product.stock_qty <= target_product.low_stock_threshold:
-                    db.add(models.NotificationLog(
-                        notification_type="low_stock",
-                        subject=f"LOW_STOCK_{target_product.sku}",
-                        recipient="Warehouse Manager",
-                        message=(
-                            f"LOW STOCK: {target_product.name} now has only "
-                            f"{target_product.stock_qty} {target_product.unit}s remaining after order "
-                            f"{order_number}. Threshold is {target_product.low_stock_threshold}."
-                        ),
-                        delivery_status="logged",
-                    ))
-            else:
-                # Stock insufficient — log warning
+            # Backorder / Low stock alert
+            if target_product.stock_qty <= target_product.low_stock_threshold:
+                alert_type = "negative_stock" if target_product.stock_qty < 0 else "low_stock"
                 db.add(models.NotificationLog(
-                    notification_type="stock_warning",
-                    subject=f"INSUFFICIENT_STOCK_{target_product.sku}",
+                    notification_type=alert_type,
+                    subject=f"{alert_type.upper()}_{target_product.sku}",
                     recipient="Warehouse Manager",
                     message=(
-                        f"STOCK WARNING: Order {order_number} requested "
-                        f"{item_data.quantity}x {product.name} ({deduct_qty} {target_product.unit}s) but only "
-                        f"{target_product.stock_qty} {target_product.unit}s available in bulk stock."
+                        f"STOCK ALERT ({alert_type.replace('_', ' ').upper()}): {target_product.name} now has "
+                        f"{target_product.stock_qty} {target_product.unit}s remaining after order "
+                        f"{order_number}."
                     ),
                     delivery_status="logged",
                 ))
@@ -299,7 +293,6 @@ def create_order(
 
     db.refresh(order)
 
-    # ── Auto-save customer to address book ────────────────────────────────────
     try:
         from routers.customers import _upsert_customer_from_order
         import json as _json
@@ -311,6 +304,16 @@ def create_order(
         db.commit()
     except Exception:
         pass  # Never block order creation for address book errors
+
+    # ── Audit log ──────────────────────────────────────────────────────────────
+    try:
+        from routers.audit_log import log_action
+        item_names = ", ".join(f"{it.product_name} x{it.quantity}" for it in order.items)
+        log_action(db, current_user, "create", "order", order.id, order.order_number,
+                   f"Order created for {order.customer_name} | Items: {item_names} | Total: PKR {order.total_amount:,.0f}")
+        db.commit()
+    except Exception:
+        pass
 
     return order
 
@@ -487,6 +490,12 @@ def update_order(
     old_status = order.status
     update_data = data.model_dump(exclude_unset=True)
     items_data = update_data.pop("items", None)
+
+    if "delivery_date" in update_data and isinstance(update_data["delivery_date"], str):
+        try:
+            update_data["delivery_date"] = datetime.fromisoformat(update_data["delivery_date"].replace("Z", "+00:00"))
+        except Exception:
+            update_data["delivery_date"] = None
 
     for field, value in update_data.items():
         setattr(order, field, value)
@@ -837,6 +846,17 @@ def delete_order(
     db.query(models.StatusHistory).filter(models.StatusHistory.order_id == order_id).delete(synchronize_session=False)
     db.query(models.OrderItem).filter(models.OrderItem.order_id == order_id).delete(synchronize_session=False)
 
+    order_num = order.order_number
+    cust_name = order.customer_name
     db.delete(order)
     db.commit()
-    return {"message": f"Order #{order.order_number} deleted successfully"}
+
+    try:
+        from routers.audit_log import log_action
+        log_action(db, current_user, "delete", "order", order_id, order_num,
+                   f"Deleted order #{order_num} for customer: {cust_name}")
+        db.commit()
+    except Exception:
+        pass
+
+    return {"message": f"Order #{order_num} deleted successfully"}

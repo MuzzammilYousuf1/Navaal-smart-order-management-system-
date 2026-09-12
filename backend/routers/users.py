@@ -23,7 +23,7 @@ def list_users(
 def create_user(
     data: schemas.UserCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_roles("admin")),
+    current_user: models.User = Depends(require_roles("admin", "manager")),
 ):
     existing = db.query(models.User).filter(models.User.username == data.username).first()
     if existing:
@@ -39,6 +39,15 @@ def create_user(
     db.add(user)
     db.commit()
     db.refresh(user)
+
+    try:
+        from routers.audit_log import log_action
+        log_action(db, current_user, "create", "user", user.id, user.username,
+                   f"Created user '{user.name}' with role '{user.role}'")
+        db.commit()
+    except Exception:
+        pass
+
     return user
 
 
@@ -47,7 +56,7 @@ def update_user(
     user_id: int,
     data: schemas.UserUpdate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_roles("admin")),
+    current_user: models.User = Depends(require_roles("admin", "manager")),
 ):
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
@@ -69,7 +78,7 @@ def update_user(
 def delete_user(
     user_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_roles("admin")),
+    current_user: models.User = Depends(require_roles("admin", "manager")),
 ):
     if user_id == current_user.id:
         raise HTTPException(status_code=400, detail="Cannot delete yourself")
@@ -83,6 +92,17 @@ def delete_user(
     db.query(models.Task).filter(models.Task.assigned_to_id == user_id).update({models.Task.assigned_to_id: None}, synchronize_session=False)
     db.query(models.ChatMessage).filter(models.ChatMessage.sender_id == user_id).update({models.ChatMessage.sender_id: None}, synchronize_session=False)
 
+    deleted_username = user.username
+    deleted_name = user.name
     db.delete(user)
     db.commit()
-    return {"message": f"User '{user.username}' deleted successfully"}
+
+    try:
+        from routers.audit_log import log_action
+        log_action(db, current_user, "delete", "user", user_id, deleted_username,
+                   f"Deleted user '{deleted_name}' (role: {user.role if hasattr(user, 'role') else 'unknown'})")
+        db.commit()
+    except Exception:
+        pass
+
+    return {"message": f"User '{deleted_username}' deleted successfully"}

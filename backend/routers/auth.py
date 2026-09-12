@@ -33,6 +33,14 @@ def login(data: schemas.LoginRequest, db: Session = Depends(get_db)):
 
     # JWT spec requires 'sub' claim to be a string
     token = create_access_token({"sub": str(user.id)})
+
+    try:
+        from routers.audit_log import log_action
+        log_action(db, user, "login", "auth", user.id, user.username, f"User logged in")
+        db.commit()
+    except Exception:
+        pass
+
     return {
         "access_token": token,
         "token_type": "bearer",

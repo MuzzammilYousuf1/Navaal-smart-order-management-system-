@@ -14,6 +14,7 @@ const DEFAULT_FORM = {
   channel: "b2c",
   priority: "normal",
   payment_status: "cod",
+  delivery_date: new Date().toISOString().split("T")[0],
   notes: "",
   assigned_rider_name: "",
 };
@@ -290,6 +291,16 @@ export default function NewOrder() {
                   <option value="online">Online Payment</option>
                   <option value="credit">Credit</option>
                 </select>
+              </div>
+              <div>
+                <label className="label">Scheduled Delivery Date</label>
+                <input
+                  type="date"
+                  className="input"
+                  value={form.delivery_date || ""}
+                  onChange={(e) => setField("delivery_date", e.target.value)}
+                />
+                <p className="text-xs text-brand-600 mt-1.5">Schedule order for today, tomorrow, or a future delivery date.</p>
               </div>
             </div>
           </div>

@@ -61,6 +61,7 @@ class Order(Base):
 
     # Auto-saved timestamps — NEVER manually typed
     created_at = Column(DateTime, default=datetime.utcnow)
+    delivery_date = Column(DateTime, nullable=True)   # Scheduled delivery date
     rts_at = Column(DateTime, nullable=True)          # When status → ready_to_ship
     pickup_at = Column(DateTime, nullable=True)       # When status → out_for_delivery
     delivered_at = Column(DateTime, nullable=True)    # When status → delivered
@@ -384,3 +385,24 @@ class CustomerAttachment(Base):
 
     order = relationship("Order")
 
+
+class AuditLog(Base):
+    """
+    Immutable activity/audit trail for every user action in the system.
+    Captures WHO did WHAT to WHICH record and WHEN — for RBAC accountability.
+    """
+    __tablename__ = "audit_logs"
+
+    id            = Column(Integer, primary_key=True, index=True)
+    user_id       = Column(Integer, ForeignKey("users.id"), nullable=True)
+    user_name     = Column(String, nullable=True)           # denormalized for resilience
+    user_role     = Column(String, nullable=True)
+    action        = Column(String, nullable=False)          # create | update | delete | login | logout | dispatch | restock | spoilage | correction | clear | export | print
+    resource_type = Column(String, nullable=True)           # order | product | user | customer | ledger | report | gate_pass | ...
+    resource_id   = Column(String, nullable=True)           # PK / identifier of affected record
+    resource_label= Column(String, nullable=True)           # Human-readable description (e.g. order_number, product name)
+    detail        = Column(Text, nullable=True)             # JSON or plain text of what changed
+    ip_address    = Column(String, nullable=True)
+    created_at    = Column(DateTime, default=datetime.utcnow, index=True)
+
+    user = relationship("User")

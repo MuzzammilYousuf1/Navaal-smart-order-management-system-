@@ -23,6 +23,7 @@ import Subscriptions from "./pages/Subscriptions";
 import Tasks from "./pages/Tasks";
 import CustomerProfiles from "./pages/CustomerProfiles";
 import Accounts from "./pages/Accounts";
+import ActivityLog from "./pages/ActivityLog";
 
 function ProtectedLayout() {
   const [toasts, setToasts] = useState([]);
@@ -56,16 +57,17 @@ function ProtectedLayout() {
           <Route path="/inventory"      element={<Inventory />} />
           <Route path="/picklist"       element={<PickList />} />
           <Route path="/scan"           element={<ScanOrder />} />
-          <Route path="/invoices"       element={<Invoices />} />
+          <Route path="/invoices"       element={<RequireRole roles={["admin", "manager"]}><Invoices /></RequireRole>} />
           <Route path="/tracking"       element={<RiderMap />} />
-          <Route path="/reports"        element={<Reports />} />
-          <Route path="/reporting"      element={<Reports />} />
+          <Route path="/reports"        element={<RequireRole roles={["admin", "manager"]}><Reports /></RequireRole>} />
+          <Route path="/reporting"      element={<RequireRole roles={["admin", "manager"]}><Reports /></RequireRole>} />
           <Route path="/subscriptions"   element={<Subscriptions />} />
           <Route path="/customers"       element={<CustomerProfiles />} />
-          <Route path="/accounts"        element={<Accounts />} />
+          <Route path="/accounts"        element={<RequireRole roles={["admin", "manager"]}><Accounts /></RequireRole>} />
           <Route path="/notifications"  element={<Notifications />} />
-          <Route path="/users"          element={<Users />} />
+          <Route path="/users"          element={<RequireRole roles={["admin", "manager"]}><Users /></RequireRole>} />
           <Route path="/tasks"          element={<Tasks />} />
+          <Route path="/activity"       element={<RequireRole roles={["admin", "manager"]}><ActivityLog /></RequireRole>} />
           <Route path="*"               element={<Navigate to="/" />} />
         </Routes>
       </main>
@@ -77,6 +79,14 @@ function ProtectedLayout() {
 function RequireAuth({ children }) {
   const { token } = useAuth();
   if (!token) return <Navigate to="/login" replace />;
+  return children;
+}
+
+function RequireRole({ roles, children }) {
+  const { user } = useAuth();
+  if (!user || !roles.includes(user.role)) {
+    return <Navigate to="/orders" replace />;
+  }
   return children;
 }
 

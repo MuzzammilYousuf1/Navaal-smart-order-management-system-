@@ -62,7 +62,11 @@ export default function UsersPage() {
       setShowForm(false);
       fetch();
     } catch (err) {
-      setError(err.response?.data?.detail || "Save failed");
+      const detail = err.response?.data?.detail;
+      let msg = "Save failed";
+      if (typeof detail === "string") msg = detail;
+      else if (Array.isArray(detail)) msg = detail.map((d) => d.msg || d.detail).join(", ");
+      setError(msg);
     } finally {
       setSaving(false);
     }
@@ -74,11 +78,15 @@ export default function UsersPage() {
       await api.delete(`/api/users/${u.id}`);
       fetch();
     } catch (err) {
-      alert(err.response?.data?.detail || "Delete failed");
+      const detail = err.response?.data?.detail;
+      let msg = "Delete failed";
+      if (typeof detail === "string") msg = detail;
+      else if (Array.isArray(detail)) msg = detail.map((d) => d.msg || d.detail).join(", ");
+      alert(msg);
     }
   };
 
-  const isAdmin = currentUser?.role === "admin";
+  const canManageUsers = currentUser?.role === "admin" || currentUser?.role === "manager";
 
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-5">
@@ -89,7 +97,7 @@ export default function UsersPage() {
         </div>
         <div className="flex gap-3">
           <button onClick={fetch} className="btn-secondary"><RefreshCw className="w-4 h-4" /></button>
-          {isAdmin && (
+          {canManageUsers && (
             <button onClick={openCreate} className="btn-primary"><Plus className="w-4 h-4" /> Add User</button>
           )}
         </div>
@@ -160,7 +168,7 @@ export default function UsersPage() {
                   )}
                 </div>
               </div>
-              {isAdmin && u.id !== currentUser?.id && (
+              {canManageUsers && u.id !== currentUser?.id && (
                 <div className="flex gap-1 shrink-0">
                   <button onClick={() => openEdit(u)} className="btn-ghost p-1.5"><Edit className="w-4 h-4" /></button>
                   <button onClick={() => handleDelete(u)} className="btn-ghost p-1.5 text-red-400 hover:text-red-300"><Trash2 className="w-4 h-4" /></button>

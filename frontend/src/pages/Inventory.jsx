@@ -6,6 +6,41 @@ import {
 import api, { API_BASE } from "../api/client";
 import useAuth from "../store/useAuth";
 
+// ── Unit display helpers ───────────────────────────────────────────────────────
+// These helpers normalize how stock quantities and prices are displayed,
+// ensuring g↔kg and ml↔litre are shown consistently.
+
+/**
+ * Returns a human-readable quantity string.
+ * If unit is "g"  and qty ≥ 1000 → convert to kg (e.g. 2200g → "2.2 kg")
+ * If unit is "ml" and qty ≥ 1000 → convert to L  (e.g. 1500ml → "1.5 L")
+ * Otherwise just show qty + unit.
+ */
+function formatStockQty(qty, unit) {
+  if (!unit) return `${qty}`;
+  const u = unit.toLowerCase();
+  if ((u === "g" || u === "gram" || u === "grams") && qty >= 1000) {
+    return `${+(qty / 1000).toFixed(3)} kg`;
+  }
+  if ((u === "ml" || u === "millilitre") && qty >= 1000) {
+    return `${+(qty / 1000).toFixed(2)} L`;
+  }
+  return `${qty} ${unit}`;
+}
+
+/**
+ * Returns the effective price-per-unit label for display.
+ * e.g. "PKR 1,200 / kg" or "PKR 500 / unit"
+ */
+function formatPriceLabel(price, unit) {
+  if (!unit) return `PKR ${price?.toLocaleString()}`;
+  const u = unit.toLowerCase();
+  // If product is stored in grams but user prices per gram, show /g
+  // If stored in kg, show /kg — just use the product's own unit label
+  return `PKR ${price?.toLocaleString()} / ${unit}`;
+}
+
+
 export default function Inventory() {
   const { user } = useAuth();
   const canManage = user?.role === "admin" || user?.role === "manager";
@@ -16,9 +51,12 @@ export default function Inventory() {
   const [filterCategory, setFilterCategory] = useState("");
   const [showLowStockOnly, setShowLowStockOnly] = useState(false);
 
+  const [activeTab, setActiveTab] = useState("products"); // "products" | "spoiled" | "broken"
+
   // Restock Modal state
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [restockQty, setRestockQty] = useState(10);
+  const [restockPrice, setRestockPrice] = useState(0);
   const [restockNote, setRestockNote] = useState("");
   const [updating, setUpdating] = useState(false);
 
@@ -30,6 +68,7 @@ export default function Inventory() {
   // Spoilage / Broken Stock state
   const [spoilProduct, setSpoilProduct] = useState(null);
   const [spoilQty, setSpoilQty] = useState(1);
+  const [spoilType, setSpoilType] = useState("spoiled"); // "spoiled" | "broken"
   const [spoilAction, setSpoilAction] = useState("discarded");
   const [spoilOrderNum, setSpoilOrderNum] = useState("");
   const [spoilNote, setSpoilNote] = useState("");
@@ -58,7 +97,7 @@ export default function Inventory() {
     try {
       const [pRes, mRes, sRes] = await Promise.all([
         api.get("/api/inventory/products", { params: { low_stock_only: showLowStockOnly, category: filterCategory || undefined } }),
-        api.get("/api/inventory/movements", { params: { limit: 30 } }),
+        api.get("/api/inventory/movements", { params: { limit: 100 } }),
         api.get("/api/inventory/summary"),
       ]);
       setProducts(pRes.data);
@@ -81,11 +120,13 @@ export default function Inventory() {
     setUpdating(true);
     try {
       await api.post(`/api/inventory/products/${selectedProduct.id}/restock`, {
-        quantity: parseInt(restockQty),
+        quantity: parseFloat(restockQty),
+        unit_price: restockPrice !== "" ? parseFloat(restockPrice) : undefined,
         note: restockNote || "Manual restock",
       });
       setSelectedProduct(null);
       setRestockQty(10);
+      setRestockPrice(0);
       setRestockNote("");
       fetchData();
     } catch (err) {
@@ -122,13 +163,15 @@ export default function Inventory() {
     try {
       await api.post(`/api/inventory/products/${spoilProduct.id}/spoilage`, {
         quantity: parseFloat(spoilQty),
+        spoil_type: spoilType,
         action: spoilAction,
         order_number: spoilOrderNum || null,
         note: spoilNote || null,
       });
-      showStatus(`Spoilage logged (${spoilAction})! ${spoilQty} ${spoilProduct.unit}s updated.`, "success");
+      showStatus(`${spoilType === "broken" ? "Broken" : "Spoiled"} stock logged! ${spoilQty} ${spoilProduct.unit}s updated.`, "success");
       setSpoilProduct(null);
       setSpoilQty(1);
+      setSpoilType("spoiled");
       setSpoilAction("discarded");
       setSpoilOrderNum("");
       setSpoilNote("");
@@ -448,10 +491,10 @@ export default function Inventory() {
                           })()}
                         </td>
                         <td className="td text-xs text-brand-400">{p.category}</td>
-                        <td className="td font-medium text-brand-300">PKR {p.unit_price.toLocaleString()}</td>
+                        <td className="td font-medium text-brand-300">{formatPriceLabel(p.unit_price, p.unit)}</td>
                         <td className="td">
                           <div className="space-y-1">
-                            <span className="text-sm font-bold text-white">{p.stock_qty} {p.unit}s</span>
+                            <span className="text-sm font-bold text-white">{formatStockQty(p.stock_qty, p.unit)}</span>
                             <div className="w-24 h-1.5 rounded-full bg-surface-800 overflow-hidden">
                               <div
                                 className={`h-full rounded-full ${isZero ? "bg-red-500" : isLow ? "bg-amber-400" : "bg-emerald-500"}`}
@@ -461,7 +504,11 @@ export default function Inventory() {
                           </div>
                         </td>
                         <td className="td">
-                          {isZero ? (
+                          {p.stock_qty < 0 ? (
+                            <span className="px-2.5 py-1 rounded-full text-[10px] font-bold uppercase bg-purple-900/50 text-purple-300 border border-purple-600/60 animate-pulse">
+                              Negative Stock ({p.stock_qty})
+                            </span>
+                          ) : isZero ? (
                             <span className="px-2.5 py-1 rounded-full text-[10px] font-bold uppercase bg-red-900/40 text-red-400 border border-red-700/50">
                               Out of Stock
                             </span>
@@ -597,6 +644,20 @@ export default function Inventory() {
               </div>
 
               <div>
+                <label className="label">Unit Price (PKR per {selectedProduct.unit}) — Update Daily Price</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  className="input border-brand-700/60"
+                  placeholder={`Current: ${selectedProduct.unit_price}`}
+                  value={restockPrice}
+                  onChange={(e) => setRestockPrice(e.target.value)}
+                />
+                <p className="text-[11px] text-brand-500 mt-1">Leave blank to keep existing price (PKR {selectedProduct.unit_price}).</p>
+              </div>
+
+              <div>
                 <label className="label">Note / Supplier Reference</label>
                 <input
                   type="text"
@@ -639,7 +700,6 @@ export default function Inventory() {
                 <label className="label">Set Stock To (exact quantity)</label>
                 <input
                   type="number"
-                  min="0"
                   step="any"
                   className="input border-amber-800/40"
                   value={correctQty}
@@ -683,7 +743,7 @@ export default function Inventory() {
         <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
           <div className="card w-full max-w-md space-y-4 bg-surface-900 border-red-900/40 border">
             <div>
-              <h2 className="text-lg font-bold text-white">Report Spoilage — {spoilProduct.name}</h2>
+              <h2 className="text-lg font-bold text-white">Report Stock Loss — {spoilProduct.name}</h2>
               <p className="text-xs text-red-400 mt-1">
                 Deducts spoiled or broken units from stock and recalculates all available packs.
               </p>
@@ -694,7 +754,35 @@ export default function Inventory() {
 
             <form onSubmit={handleReportSpoilage} className="space-y-4">
               <div>
-                <label className="label">Quantity Spoiled / Broken ({spoilProduct.unit}s)</label>
+                <label className="label">Category of Loss *</label>
+                <div className="grid grid-cols-2 gap-3 mt-1">
+                  <button
+                    type="button"
+                    onClick={() => setSpoilType("spoiled")}
+                    className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all ${
+                      spoilType === "spoiled"
+                        ? "bg-amber-900/40 border-amber-600 text-amber-300"
+                        : "bg-surface-800 border-surface-700 text-brand-400"
+                    }`}
+                  >
+                    🍂 Spoiled / Expired
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSpoilType("broken")}
+                    className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all ${
+                      spoilType === "broken"
+                        ? "bg-red-900/40 border-red-600 text-red-300"
+                        : "bg-surface-800 border-surface-700 text-brand-400"
+                    }`}
+                  >
+                    💥 Broken / Damaged
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="label">Quantity Lost ({spoilProduct.unit}s)</label>
                 <input
                   type="number"
                   min="0.1"
