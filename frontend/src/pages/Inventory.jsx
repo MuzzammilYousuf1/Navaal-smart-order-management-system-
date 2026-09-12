@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   Boxes, AlertTriangle, Plus, RefreshCw, ArrowUpRight, ArrowDownRight, PackageCheck,
-  Upload, Download, Trash2, CheckCircle, FileSpreadsheet, Bot, BotOff
+  Upload, Download, Trash2, CheckCircle, FileSpreadsheet, Bot, BotOff, Edit3
 } from "lucide-react";
 import api, { API_BASE } from "../api/client";
 import useAuth from "../store/useAuth";
@@ -56,9 +56,11 @@ export default function Inventory() {
   // Restock Modal state
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [restockQty, setRestockQty] = useState(10);
-  const [restockPrice, setRestockPrice] = useState(0);
+  const [restockPrice, setRestockPrice] = useState("");
   const [restockNote, setRestockNote] = useState("");
   const [updating, setUpdating] = useState(false);
+  const [priceProduct, setPriceProduct] = useState(null);
+  const [priceValue, setPriceValue] = useState("");
 
   // Stock Correction (set to exact value) state
   const [correctProduct, setCorrectProduct] = useState(null);
@@ -126,11 +128,28 @@ export default function Inventory() {
       });
       setSelectedProduct(null);
       setRestockQty(10);
-      setRestockPrice(0);
+      setRestockPrice("");
       setRestockNote("");
       fetchData();
     } catch (err) {
       alert(err.response?.data?.detail || "Restock failed");
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const handleUpdatePrice = async (e) => {
+    e.preventDefault();
+    if (!priceProduct || priceValue === "" || Number(priceValue) < 0) return;
+    setUpdating(true);
+    try {
+      await api.put(`/api/inventory/products/${priceProduct.id}`, { unit_price: Number(priceValue) });
+      setPriceProduct(null);
+      setPriceValue("");
+      showStatus(`Price updated for ${priceProduct.name}.`, "success");
+      fetchData();
+    } catch (err) {
+      alert(err.response?.data?.detail || "Price update failed");
     } finally {
       setUpdating(false);
     }
@@ -548,11 +567,20 @@ export default function Inventory() {
                         <td className="td">
                           <div className="flex flex-col gap-1.5">
                             <button
-                              onClick={() => { setSelectedProduct(p); setRestockQty(10); setRestockNote(""); }}
+                              onClick={() => { setSelectedProduct(p); setRestockQty(10); setRestockPrice(""); setRestockNote(""); }}
                               className="btn-secondary text-xs px-2.5 py-1 border-brand-700/60 text-brand-300"
                             >
                               + Restock
                             </button>
+                            {canManage && (
+                              <button
+                                onClick={() => { setPriceProduct(p); setPriceValue(String(p.unit_price ?? "")); }}
+                                className="btn-secondary text-xs px-2.5 py-1 border-sky-800/40 text-sky-400 hover:bg-sky-950/20 flex items-center justify-center gap-1"
+                                title="Change this item's price without creating a new item"
+                              >
+                                <Edit3 className="w-3 h-3" /> Edit Price
+                              </button>
+                            )}
                             <button
                               onClick={() => { setSpoilProduct(p); setSpoilQty(1); setSpoilNote(""); }}
                               className="btn-secondary text-xs px-2.5 py-1 border-red-900/40 text-red-400 hover:bg-red-950/20"
@@ -732,6 +760,28 @@ export default function Inventory() {
                 <button type="submit" disabled={updating} className="btn-primary bg-amber-600 hover:bg-amber-500 border-amber-600">
                   {updating ? "Saving..." : "Set Exact Stock"}
                 </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit existing item price modal (including subcategory items) */}
+      {priceProduct && (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+          <div className="card w-full max-w-md space-y-4 bg-surface-900 border-surface-700">
+            <h2 className="text-lg font-bold text-white">Change price: {priceProduct.name}</h2>
+            {priceProduct.base_product_id && (
+              <p className="text-xs text-brand-400">This changes only this subcategory item. The parent product price remains unchanged.</p>
+            )}
+            <form onSubmit={handleUpdatePrice} className="space-y-4">
+              <div>
+                <label className="label">Unit Price (PKR per {priceProduct.unit})</label>
+                <input type="number" min="0" step="any" className="input" value={priceValue} onChange={(e) => setPriceValue(e.target.value)} required autoFocus />
+              </div>
+              <div className="flex justify-end gap-3">
+                <button type="button" onClick={() => setPriceProduct(null)} className="btn-secondary">Cancel</button>
+                <button type="submit" disabled={updating} className="btn-primary">{updating ? "Saving..." : "Save Price"}</button>
               </div>
             </form>
           </div>

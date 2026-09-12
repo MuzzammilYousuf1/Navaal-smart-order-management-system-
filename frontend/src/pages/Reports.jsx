@@ -407,7 +407,7 @@ export default function Reports() {
             ) : (
               <>
                 {/* Monthly Summary Metric Boxes */}
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
                   <div className="bg-surface-850 p-3 rounded-xl border border-surface-800 text-center">
                     <p className="text-xs text-brand-500 uppercase tracking-wider font-semibold">Bulk Received</p>
                     <p className="text-2xl font-bold text-emerald-400 mt-1">
@@ -424,6 +424,12 @@ export default function Reports() {
                     <p className="text-xs text-red-400 uppercase tracking-wider font-semibold">Spoilage Loss</p>
                     <p className="text-2xl font-bold text-red-400 mt-1">
                       PKR {monthlyData.total_spoilage_cost.toLocaleString()}
+                    </p>
+                  </div>
+                  <div className="bg-surface-850 p-3 rounded-xl border border-amber-900/30 text-center">
+                    <p className="text-xs text-amber-400 uppercase tracking-wider font-semibold">Broken Loss</p>
+                    <p className="text-2xl font-bold text-amber-400 mt-1">
+                      PKR {(monthlyData.total_broken_cost || 0).toLocaleString()}
                     </p>
                   </div>
                   <div className="bg-surface-850 p-3 rounded-xl border border-surface-800 text-center">
@@ -443,8 +449,10 @@ export default function Reports() {
                         <th className="th">Item Type</th>
                         <th className="th">Received / Restocked</th>
                         <th className="th">Units Sold</th>
-                        <th className="th">Spoilage / Damaged</th>
-                        <th className="th">Spoilage Cost</th>
+                        <th className="th">Spoiled</th>
+                        <th className="th">Broken</th>
+                        <th className="th">Spoiled Cost</th>
+                        <th className="th">Broken Cost</th>
                         <th className="th">Current Available Stock</th>
                         <th className="th">Inventory Valuation</th>
                       </tr>
@@ -483,13 +491,21 @@ export default function Reports() {
                             )}
                           </td>
                           <td className="td">
-                            {it.spoilage_cost > 0 ? (
+                            {it.broken_qty > 0 ? (
+                              <span className="text-amber-400 font-bold">-{it.broken_qty} {it.unit}s</span>
+                            ) : <span className="text-brand-600">—</span>}
+                          </td>
+                          <td className="td">
+                            {it.spoiled_cost > 0 ? (
                               <span className="text-red-400 font-semibold">
-                                PKR {it.spoilage_cost.toLocaleString()}
+                                PKR {it.spoiled_cost.toLocaleString()}
                               </span>
                             ) : (
                               <span className="text-brand-600">—</span>
                             )}
+                          </td>
+                          <td className="td">
+                            {it.broken_cost > 0 ? <span className="text-amber-400 font-semibold">PKR {it.broken_cost.toLocaleString()}</span> : <span className="text-brand-600">—</span>}
                           </td>
                           <td className="td font-bold text-white">
                             {it.current_stock} {it.unit}s

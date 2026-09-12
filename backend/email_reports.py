@@ -384,7 +384,7 @@ def generate_daily_report_html(db: Session, target_date: datetime) -> str:
     spoilages = db.query(models.StockMovement).filter(
         models.StockMovement.created_at >= day_start,
         models.StockMovement.created_at <= day_end,
-        models.StockMovement.movement_type.in_(["spoilage", "adjustment"]),
+        models.StockMovement.movement_type.in_(["spoilage", "spoiled", "broken", "adjustment"]),
         models.StockMovement.quantity_change < 0
     ).all()
 
@@ -558,6 +558,7 @@ def generate_daily_report_html(db: Session, target_date: datetime) -> str:
                 <table width="100%" style="border-collapse: collapse; font-size: 13px; margin-bottom: 25px;">
                     <tr style="background-color: #7f1d1d; color: #ffffff; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">
                         <th style="padding: 10px; text-align: left;">Product</th>
+                        <th style="padding: 10px; text-align: center;">Type</th>
                         <th style="padding: 10px; text-align: center;">Qty Lost</th>
                         <th style="padding: 10px; text-align: right;">Est. Value Loss</th>
                         <th style="padding: 10px; text-align: left; padding-left: 20px;">Reason/Note</th>
@@ -571,9 +572,11 @@ def generate_daily_report_html(db: Session, target_date: datetime) -> str:
         p_price = product.unit_price if product else 0.0
         val_lost = abs(s_mov.quantity_change) * p_price
         total_spoil_val += val_lost
+        loss_type = "BROKEN" if s_mov.movement_type == "broken" else "SPOILED"
         html += f"""
                     <tr style="border-bottom: 1px solid #e2e8f0;">
                         <td style="padding: 10px; text-align: left; font-weight: 600; color: #1e293b;">{p_name}</td>
+                        <td style="padding: 10px; text-align: center; color: {'#b45309' if loss_type == 'BROKEN' else '#dc2626'}; font-weight: bold;">{loss_type}</td>
                         <td style="padding: 10px; text-align: center; color: #dc2626; font-weight: bold;">-{abs(s_mov.quantity_change)} {product.unit if product else "units"}</td>
                         <td style="padding: 10px; text-align: right; color: #b91c1c; font-weight: bold;">PKR {val_lost:,.0f}</td>
                         <td style="padding: 10px; text-align: left; padding-left: 20px; color: #64748b; font-style: italic;">{s_mov.note or '—'}</td>
@@ -583,13 +586,13 @@ def generate_daily_report_html(db: Session, target_date: datetime) -> str:
     if not spoilages:
         html += """
                     <tr>
-                        <td colspan="4" style="padding: 20px; text-align: center; color: #94a3b8; font-style: italic;">No stock wastage or spoilages logged today. ✓</td>
+                        <td colspan="5" style="padding: 20px; text-align: center; color: #94a3b8; font-style: italic;">No stock wastage or spoilages logged today. ✓</td>
                     </tr>
         """
     else:
         html += f"""
                     <tr style="background-color: #fef2f2; font-weight: bold;">
-                        <td colspan="2" style="padding: 10px; text-align: left; color: #991b1b;">Total Loss Valuation</td>
+                        <td colspan="3" style="padding: 10px; text-align: left; color: #991b1b;">Total Loss Valuation</td>
                         <td style="padding: 10px; text-align: right; color: #991b1b; font-size: 14px; font-weight: 800;">PKR {total_spoil_val:,.0f}</td>
                         <td style="padding: 10px;"></td>
                     </tr>

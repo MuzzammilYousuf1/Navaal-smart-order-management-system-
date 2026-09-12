@@ -268,13 +268,20 @@ def get_inventory_performance(
         )
 
         # Wastage / Spoilage (movements with type adjustment or spoilage and change < 0)
-        wastage_qty = (
+        spoiled_qty = (
             db.query(func.sum(func.abs(models.StockMovement.quantity_change)))
             .filter(
                 models.StockMovement.product_id == p.id,
-                models.StockMovement.movement_type.in_(["adjustment", "spoilage"]),
+                models.StockMovement.movement_type.in_(["adjustment", "spoilage", "spoiled"]),
                 models.StockMovement.quantity_change < 0
             )
+            .scalar() or 0.0
+        )
+        broken_qty = (
+            db.query(func.sum(func.abs(models.StockMovement.quantity_change)))
+            .filter(models.StockMovement.product_id == p.id,
+                    models.StockMovement.movement_type == "broken",
+                    models.StockMovement.quantity_change < 0)
             .scalar() or 0.0
         )
 
@@ -292,6 +299,7 @@ def get_inventory_performance(
         from routers.inventory import compute_stock_qty
         current_stock = compute_stock_qty(p, base_stocks)
 
+        wastage_qty = spoiled_qty + broken_qty
         starting_stock = current_stock + sold_qty + wastage_qty - restock_qty
         avg_stock = (max(0, starting_stock) + current_stock) / 2.0
         turnover_rate = round(sold_qty / avg_stock, 2) if avg_stock > 0 else 0.0
@@ -309,6 +317,10 @@ def get_inventory_performance(
             "sold_qty": sold_qty,
             "wastage_qty": wastage_qty,
             "wastage_value": wastage_value,
+            "spoiled_qty": spoiled_qty,
+            "broken_qty": broken_qty,
+            "spoiled_value": round(spoiled_qty * p.unit_price, 2),
+            "broken_value": round(broken_qty * p.unit_price, 2),
             "turnover_rate": turnover_rate,
         })
 
@@ -352,6 +364,8 @@ def get_monthly_inventory(
 
     items_report = []
     total_spoilage_cost = 0.0
+    total_spoiled_cost = 0.0
+    total_broken_cost = 0.0
     total_received_units = 0.0
     total_sold_units = 0.0
 
@@ -369,6 +383,8 @@ def get_monthly_inventory(
         broken_cost = round(broken * p.unit_price, 2)
         if p.base_product_id is None:
             total_spoilage_cost += (spoiled_cost + broken_cost)
+            total_spoiled_cost += spoiled_cost
+            total_broken_cost += broken_cost
             total_received_units += received
             total_sold_units += sold
 
@@ -403,6 +419,8 @@ def get_monthly_inventory(
         "total_received_units": total_received_units,
         "total_sold_units": total_sold_units,
         "total_spoilage_cost": total_spoilage_cost,
+        "total_spoiled_cost": total_spoiled_cost,
+        "total_broken_cost": total_broken_cost,
         "total_inventory_value": total_inventory_val,
         "items": items_report,
     }
@@ -449,9 +467,13 @@ def get_daily_working(
         {"product_id": m.product_id, "qty": m.quantity_change, "note": m.note, "time": m.created_at.strftime("%H:%M")}
         for m in movements if m.movement_type == "restock"
     ]
-    spoilage_today = [
+    spoiled_today = [
         {"product_id": m.product_id, "qty": abs(m.quantity_change), "note": m.note, "time": m.created_at.strftime("%H:%M")}
-        for m in movements if m.movement_type in ("spoilage", "adjustment") and m.quantity_change < 0
+        for m in movements if m.movement_type in ("spoilage", "spoiled", "adjustment") and m.quantity_change < 0
+    ]
+    broken_today = [
+        {"product_id": m.product_id, "qty": abs(m.quantity_change), "note": m.note, "time": m.created_at.strftime("%H:%M")}
+        for m in movements if m.movement_type == "broken" and m.quantity_change < 0
     ]
 
     orders_summary = [
@@ -473,10 +495,14 @@ def get_daily_working(
         "delivered_orders": len(delivered_orders),
         "total_revenue": total_revenue,
         "restocks_count": len(restocks_today),
-        "spoilage_count": len(spoilage_today),
+        "spoilage_count": len(spoiled_today) + len(broken_today),
+        "spoiled_count": len(spoiled_today),
+        "broken_count": len(broken_today),
         "orders": orders_summary,
         "restocks": restocks_today,
-        "spoilage": spoilage_today,
+        "spoilage": spoiled_today,
+        "spoiled": spoiled_today,
+        "broken": broken_today,
     }
 
 
@@ -591,7 +617,6 @@ def download_pdf_report(
             "Access-Control-Expose-Headers": "Content-Disposition"
         }
     )
-
 
 
 

@@ -152,9 +152,14 @@ def create_order(
     if data.delivery_date:
         if isinstance(data.delivery_date, str):
             try:
-                deliv_dt = datetime.fromisoformat(data.delivery_date.replace("Z", "+00:00"))
+                parsed = data.delivery_date.replace("Z", "+00:00")
+                # The UI sends a date-only value; store it as the start of that day.
+                deliv_dt = datetime.fromisoformat(parsed)
             except Exception:
-                deliv_dt = None
+                try:
+                    deliv_dt = datetime.strptime(data.delivery_date, "%Y-%m-%d")
+                except Exception:
+                    raise HTTPException(status_code=400, detail="Scheduled delivery date must be a valid date")
         elif isinstance(data.delivery_date, datetime):
             deliv_dt = data.delivery_date
 
@@ -264,19 +269,22 @@ def create_order(
     # ── Post debit/credit ledger entries ──────────────────────────────────────
     try:
         from routers.ledger import post_ledger_entry
-        # 1. Debit the total order amount
-        post_ledger_entry(
-            db=db,
-            phone=order.customer_phone,
-            channel=order.channel or "b2c",
-            entry_type="debit",
-            amount=order.total_amount,
-            description=f"Order {order.order_number} created",
-            order_id=order.id,
-            created_by=current_user.name,
-        )
-        # 2. If payment was already received on creation, credit it
-        if order.amount_received and order.amount_received > 0:
+        # Ledger rows require a customer phone. Orders may still be created
+        # from integrations without one, so inventory/order creation must not
+        # fail just because the optional ledger identity is missing.
+        if order.customer_phone:
+            post_ledger_entry(
+                db=db,
+                phone=order.customer_phone,
+                channel=order.channel or "b2c",
+                entry_type="debit",
+                amount=order.total_amount,
+                description=f"Order {order.order_number} created",
+                order_id=order.id,
+                created_by=current_user.name,
+            )
+        # If payment was already received on creation, credit it.
+        if order.customer_phone and order.amount_received and order.amount_received > 0:
             post_ledger_entry(
                 db=db,
                 phone=order.customer_phone,

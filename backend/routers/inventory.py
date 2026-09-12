@@ -216,7 +216,8 @@ def restock_product(
     if data.quantity <= 0:
         raise HTTPException(status_code=400, detail="Quantity must be positive")
 
-    # Update product unit price if user entered a new price during restock
+    # The restock price belongs to the item being restocked. A subcategory or
+    # pack may have its own selling price and must not overwrite its parent.
     if data.unit_price is not None and data.unit_price >= 0:
         p.unit_price = data.unit_price
 
@@ -226,8 +227,6 @@ def restock_product(
         base_p = db.query(models.Product).filter(models.Product.id == p.base_product_id).first()
         if not base_p:
             raise HTTPException(status_code=400, detail="Parent bulk product not found")
-        if data.unit_price is not None and data.unit_price >= 0:
-            base_p.unit_price = data.unit_price
         mult = p.unit_multiplier or 1.0
         change = round(data.quantity * mult, 2)  # e.g. 50 packs × 6 = 300 eggs
         note = data.note or (
