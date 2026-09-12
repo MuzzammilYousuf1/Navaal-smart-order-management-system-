@@ -67,7 +67,7 @@ function ProtectedLayout() {
           <Route path="/notifications"  element={<Notifications />} />
           <Route path="/users"          element={<RequireRole roles={["admin", "manager"]}><Users /></RequireRole>} />
           <Route path="/tasks"          element={<Tasks />} />
-          <Route path="/activity"       element={<RequireRole roles={["admin", "manager"]}><ActivityLog /></RequireRole>} />
+          <Route path="/activity"       element={<ActivityLog />} />
           <Route path="*"               element={<Navigate to="/" />} />
         </Routes>
       </main>

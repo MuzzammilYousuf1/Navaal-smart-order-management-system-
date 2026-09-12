@@ -10,12 +10,14 @@ import logging
 from contextlib import asynccontextmanager
 from typing import List
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from database import engine
+from database import engine, SessionLocal
+from jose import jwt
+from auth import SECRET_KEY, ALGORITHM
 import models
 from sla_engine import run_sla_check, set_ws_manager
 from routers import auth, orders, dashboard, reports, notifications, users, tracking, inventory, invoices, data_mgmt, customers, subscriptions, tasks, chat, webhook_n8n, ledger, accounts, audit_log
@@ -215,6 +217,89 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+
+def _audit_resource(path: str):
+    """Map an API path to a stable audit resource type and id/label."""
+    parts = [p for p in path.strip("/").split("/") if p]
+    if len(parts) < 2 or parts[0] != "api":
+        return None, None, path
+    resource_map = {
+        "orders": "order", "inventory": "product", "users": "user",
+        "customers": "customer", "accounts": "account", "subscriptions": "subscription",
+        "tasks": "task", "ledger": "ledger", "tracking": "tracking",
+        "data": "data", "reports": "report", "chat": "chat", "webhook": "webhook",
+    }
+    resource = resource_map.get(parts[1], parts[1])
+    resource_id = next((p for p in parts[2:] if p.isdigit()), None)
+    label = "/".join(parts[1:])
+    return resource, resource_id, label
+
+
+def _audit_action(method: str, path: str) -> str:
+    if "restock" in path:
+        return "restock"
+    if "spoilage" in path:
+        return "spoilage"
+    if "dispatch" in path:
+        return "dispatch"
+    if "export" in path or "pdf" in path:
+        return "export"
+    if method == "DELETE":
+        return "delete"
+    if method in ("PUT", "PATCH"):
+        return "update"
+    return "create"
+
+
+@app.middleware("http")
+async def audit_authenticated_mutations(request: Request, call_next):
+    """Record every authenticated state-changing API request.
+
+    A few high-value endpoints already write richer audit entries themselves;
+    those are excluded here to avoid duplicate rows. The middleware covers the
+    remaining CRUD and operational endpoints automatically as the API grows.
+    """
+    method = request.method.upper()
+    path = request.url.path.rstrip("/") or "/"
+    skip_manual = (
+        (method == "POST" and path in ("/api/auth/login", "/api/orders", "/api/users"))
+        or (method == "DELETE" and path.startswith("/api/orders/"))
+        or (method == "DELETE" and path.startswith("/api/users/"))
+        or (method == "POST" and any(path.endswith(s) for s in ("/restock", "/set-stock")))
+    )
+    candidate_audit = method in ("POST", "PUT", "PATCH", "DELETE") and path.startswith("/api/") and path != "/api/audit"
+
+    response = None
+    try:
+        response = await call_next(request)
+        return response
+    finally:
+        # Existing handlers write richer entries for successful high-value
+        # actions. Still record failed attempts, including failed user creates.
+        should_audit = candidate_audit and (not skip_manual or (response is not None and response.status_code >= 400))
+        if should_audit:
+            try:
+                auth_header = request.headers.get("authorization", "")
+                if auth_header.lower().startswith("bearer "):
+                    payload = jwt.decode(auth_header[7:], SECRET_KEY, algorithms=[ALGORITHM])
+                    user_id = int(payload.get("sub"))
+                    db = SessionLocal()
+                    user = db.query(models.User).filter(models.User.id == user_id, models.User.is_active == True).first()
+                    if user:
+                        resource_type, resource_id, resource_label = _audit_resource(path)
+                        status_code = response.status_code if response is not None else 500
+                        from routers.audit_log import log_action
+                        log_action(
+                            db, user, _audit_action(method, path), resource_type, resource_id,
+                            resource_label, f"{method} {path} completed with HTTP {status_code}",
+                            request.client.host if request.client else None,
+                        )
+                        db.commit()
+                    db.close()
+            except Exception:
+                # Auditing must never break or change the primary API response.
+                pass
 
 app.add_middleware(
     CORSMiddleware,

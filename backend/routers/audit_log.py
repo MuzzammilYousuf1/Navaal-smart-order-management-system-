@@ -63,13 +63,13 @@ def list_audit_log(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    """Retrieve audit log entries — admin/manager only."""
-    if current_user.role not in ("admin", "manager"):
-        from fastapi import HTTPException
-        raise HTTPException(status_code=403, detail="Not authorized to view audit log")
+    """Retrieve audit entries. Admins see all; other roles see their role only."""
 
     since = datetime.utcnow() - timedelta(days=days)
     q = db.query(models.AuditLog).filter(models.AuditLog.created_at >= since)
+
+    if current_user.role != "admin":
+        q = q.filter(models.AuditLog.user_role == current_user.role)
 
     if user_name:
         q = q.filter(models.AuditLog.user_name.ilike(f"%{user_name}%"))
@@ -107,13 +107,12 @@ def audit_summary(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    """Quick stats for the activity dashboard."""
-    if current_user.role not in ("admin", "manager"):
-        from fastapi import HTTPException
-        raise HTTPException(status_code=403, detail="Not authorized")
-
+    """Quick stats matching the same visibility rule as the activity list."""
     since = datetime.utcnow() - timedelta(days=days)
-    entries = db.query(models.AuditLog).filter(models.AuditLog.created_at >= since).all()
+    q = db.query(models.AuditLog).filter(models.AuditLog.created_at >= since)
+    if current_user.role != "admin":
+        q = q.filter(models.AuditLog.user_role == current_user.role)
+    entries = q.all()
 
     by_user: dict = {}
     by_action: dict = {}

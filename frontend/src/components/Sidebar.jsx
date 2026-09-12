@@ -74,9 +74,9 @@ export default function Sidebar({ alertCount = 0 }) {
           .filter(({ to }) => {
             const role = user?.role || "warehouse";
             if (role === "admin" || role === "manager") return true;
-            if (role === "rider") return ["/orders", "/tracking", "/notifications"].includes(to);
+            if (role === "rider") return ["/orders", "/tracking", "/notifications", "/activity"].includes(to);
             // Warehouse & Operations
-            const restricted = ["/accounts", "/invoices", "/reporting", "/reports", "/users", "/activity"];
+            const restricted = ["/accounts", "/invoices", "/reporting", "/reports", "/users"];
             return !restricted.includes(to);
           })
           .map(({ to, icon: Icon, label }) => (
