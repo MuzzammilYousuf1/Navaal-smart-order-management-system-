@@ -4,15 +4,23 @@ import axios from "axios";
 // address, not `localhost`.  Using the current hostname keeps API requests on
 // the same machine.  VITE_API_URL remains available for a hosted deployment.
 const isDev = typeof window !== "undefined" && window.location.port === "5173";
+const configuredApiUrl = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
+
+// The production site is served by Caddy, which proxies /api and /ws to the
+// backend on the same hostname. Never let a copied development value such as
+// http://localhost:8000 escape into the live browser build.
+const pointsToLocalMachine = /^(https?:\/\/)?(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(configuredApiUrl);
+const productionApiUrl = configuredApiUrl && !pointsToLocalMachine ? configuredApiUrl : "";
 
 export const API_BASE = import.meta.env.VITE_API_URL
-  ? import.meta.env.VITE_API_URL.replace(/\/$/, "")
+  ? (isDev ? configuredApiUrl : productionApiUrl)
   : (isDev ? `${window.location.protocol}//${window.location.hostname}:8000` : "");
 
 const getWsUrl = () => {
-  if (import.meta.env.VITE_API_URL) {
-    const isHttps = import.meta.env.VITE_API_URL.startsWith("https:");
-    const host = import.meta.env.VITE_API_URL.replace(/^https?:\/\//, "").replace(/\/$/, "");
+  if (productionApiUrl || (isDev && configuredApiUrl)) {
+    const wsApiUrl = isDev ? configuredApiUrl : productionApiUrl;
+    const isHttps = wsApiUrl.startsWith("https:");
+    const host = wsApiUrl.replace(/^https?:\/\//, "").replace(/\/$/, "");
     return `${isHttps ? "wss:" : "ws:"}//${host}/ws`;
   }
   if (typeof window !== "undefined") {
@@ -79,4 +87,3 @@ export function getErrorMessage(err, fallback = "An error occurred") {
   }
   return String(detail);
 }
-
