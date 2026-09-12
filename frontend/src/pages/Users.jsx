@@ -26,7 +26,7 @@ export default function UsersPage() {
   const fetch = async () => {
     setLoading(true);
     try {
-      const { data } = await api.get("/api/users");
+      const { data } = await api.get("/api/users/");
       setUsers(data);
     } catch {} finally { setLoading(false); }
   };
@@ -75,7 +75,7 @@ export default function UsersPage() {
           password: form.password,
           role: form.role,
         };
-        await api.post("/api/users", payload);
+        await api.post("/api/users/", payload);
       }
       setShowForm(false);
       fetch();

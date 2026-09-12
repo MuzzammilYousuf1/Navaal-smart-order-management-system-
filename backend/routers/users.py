@@ -11,6 +11,7 @@ from auth import get_current_user, hash_password, require_roles
 router = APIRouter(prefix="/api/users", tags=["users"])
 
 
+@router.get("", response_model=List[schemas.UserOut], include_in_schema=False)
 @router.get("/", response_model=List[schemas.UserOut])
 def list_users(
     db: Session = Depends(get_db),
@@ -19,6 +20,7 @@ def list_users(
     return db.query(models.User).all()
 
 
+@router.post("", response_model=schemas.UserOut, include_in_schema=False)
 @router.post("/", response_model=schemas.UserOut)
 def create_user(
     data: schemas.UserCreate,
