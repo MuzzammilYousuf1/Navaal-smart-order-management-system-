@@ -1,10 +1,11 @@
 import { useEffect, useState, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-  Search, Filter, RefreshCw, Plus, ChevronRight,
-  CheckCircle, AlertTriangle, MapPin, Edit3, Truck, Package
+  Search, Filter, RefreshCw, Plus, ChevronRight, FileSpreadsheet, Upload, Download,
+  CheckCircle, AlertTriangle, MapPin, Edit3, Truck, Package, Trash2
 } from "lucide-react";
-import api from "../api/client";
+import api, { API_BASE } from "../api/client";
+import useAuth from "../store/useAuth";
 import { StatusBadge, PriorityBadge, PaymentBadge } from "../components/StatusBadge";
 import LiveTimer from "../components/LiveTimer";
 import EditOrderModal from "../components/EditOrderModal";
@@ -79,14 +80,20 @@ export default function Orders() {
     date_filter: "",
     source:      "",
     payment_status: "",
+    rider: "",
   });
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   // Gate Pass state
   const [statusMsg, setStatusMsg] = useState("");
   const [statusType, setStatusType] = useState("");
   const [editingOrder, setEditingOrder] = useState(null);
   const [showGatePassModal, setShowGatePassModal] = useState(false);
+  const [importLoading, setImportLoading] = useState(false);
+  const [importErrors, setImportErrors] = useState([]);
+  const [riders, setRiders] = useState([]);
+  const [packingSummary, setPackingSummary] = useState([]);
 
   const showStatus = (msg, type = "success") => {
     setStatusMsg(msg);
@@ -100,8 +107,12 @@ export default function Orders() {
       const params = { ...filters };
       if (search) params.search = search;
       Object.keys(params).forEach((k) => !params[k] && delete params[k]);
-      const { data } = await api.get("/api/orders/", { params });
-      setOrders(data);
+      const [ordersRes, summaryRes] = await Promise.all([
+        api.get("/api/orders/", { params }),
+        api.get("/api/orders/packing-summary", { params: { date_filter: filters.date_filter || undefined, rider: filters.rider || undefined, status: filters.status || undefined } }),
+      ]);
+      setOrders(ordersRes.data);
+      setPackingSummary(summaryRes.data);
     } catch (err) {
       console.error(err);
     } finally {
@@ -110,21 +121,70 @@ export default function Orders() {
   }, [filters, search]);
 
   useEffect(() => {
+    api.get("/api/orders/riders/summary").then(({ data }) => setRiders(data.filter((r) => r.rider_id))).catch(() => {});
+  }, []);
+
+  useEffect(() => {
     const timer = setTimeout(fetchOrders, 300);
     return () => clearTimeout(timer);
   }, [fetchOrders]);
 
   const handleBulkRts = async () => {
     if (!window.confirm("📦 Convert ALL pending orders to 'Ready to Ship' (Fast Packaging RTS)?")) return;
-    setCsvLoading(true);
     try {
       const { data } = await api.post("/api/orders/bulk-rts", { note: "Fast Packaging Bulk RTS" });
       showStatus(`✅ ${data.message}`, "success");
       fetchOrders();
     } catch (err) {
       showStatus(`❌ ${err.response?.data?.detail || "Bulk RTS failed"}`, "error");
+    }
+  };
+
+  const handleDeleteOrder = async (order) => {
+    if (!window.confirm(`Delete order ${order.order_number} permanently? This cannot be undone.`)) return;
+    try {
+      await api.delete(`/api/orders/${order.id}`);
+      showStatus(`Order ${order.order_number} deleted.`, "success");
+      fetchOrders();
+    } catch (err) {
+      showStatus(`❌ ${err.response?.data?.detail || "Could not delete order"}`, "error");
+    }
+  };
+
+  const downloadOrderTemplate = () => {
+    const token = localStorage.getItem("sof_token");
+    window.open(`${API_BASE}/api/orders/template?token=${encodeURIComponent(token)}`, "_blank");
+  };
+
+  const exportOrders = async () => {
+    try {
+      const { data } = await api.get("/api/orders/export-csv", { responseType: "blob" });
+      const url = URL.createObjectURL(data);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "navaal_orders.csv";
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      showStatus(`❌ ${err.response?.data?.detail || "Could not export orders"}`, "error");
+    }
+  };
+
+  const importOrders = async (file) => {
+    if (!file) return;
+    setImportLoading(true);
+    setImportErrors([]);
+    const formData = new FormData();
+    formData.append("file", file);
+    try {
+      const { data } = await api.post("/api/orders/import-csv", formData, { headers: { "Content-Type": "multipart/form-data" } });
+      showStatus(`✅ ${data.message}`, "success");
+      setImportErrors(data.errors || []);
+      fetchOrders();
+    } catch (err) {
+      showStatus(`❌ ${err.response?.data?.detail || "Could not import orders"}`, "error");
     } finally {
-      setCsvLoading(false);
+      setImportLoading(false);
     }
   };
 
@@ -157,6 +217,17 @@ export default function Orders() {
             <Truck className="w-3.5 h-3.5 text-emerald-400" /> Rider Gate Pass
           </button>
 
+          <button onClick={exportOrders} className="btn-secondary text-xs" title="Export orders as CSV">
+            <Download className="w-3.5 h-3.5" /> Export CSV
+          </button>
+          <button onClick={downloadOrderTemplate} className="btn-secondary text-xs" title="Download order CSV template">
+            <FileSpreadsheet className="w-3.5 h-3.5" /> Template
+          </button>
+          <label className="btn-secondary text-xs cursor-pointer" title="Import orders from CSV">
+            <Upload className="w-3.5 h-3.5" /> {importLoading ? "Importing..." : "Import CSV"}
+            <input type="file" accept=".csv" className="hidden" disabled={importLoading} onChange={(e) => importOrders(e.target.files[0])} />
+          </label>
+
           {/* New Order */}
           <button onClick={() => navigate("/orders/new")} className="btn-primary text-xs">
             <Plus className="w-3.5 h-3.5" /> New Order
@@ -176,6 +247,13 @@ export default function Orders() {
             : <AlertTriangle className="w-5 h-5 shrink-0" />
           }
           <p className="text-sm font-medium">{statusMsg}</p>
+        </div>
+      )}
+
+      {importErrors.length > 0 && (
+        <div className="card border border-amber-700/50 bg-amber-950/20 space-y-1">
+          <p className="text-xs font-bold text-amber-300">Import warnings ({importErrors.length})</p>
+          {importErrors.slice(0, 10).map((error, index) => <p key={index} className="text-xs text-amber-200">{error}</p>)}
         </div>
       )}
 
@@ -209,13 +287,39 @@ export default function Orders() {
             {PAYMENT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
 
-          <button onClick={() => setFilters({ status:"", date_filter:"", source:"", payment_status:"" })} className="btn-secondary text-xs text-brand-500">
+          <select className="select w-full sm:w-44" value={filters.rider} onChange={(e) => setFilter("rider", e.target.value)}>
+            <option value="">All Riders</option>
+            {riders.map((rider) => <option key={rider.rider_id} value={rider.rider_name}>{rider.rider_name}</option>)}
+          </select>
+
+          <button onClick={() => setFilters({ status:"", date_filter:"", source:"", payment_status:"", rider:"" })} className="btn-secondary text-xs text-brand-500">
             Clear
           </button>
           <button onClick={fetchOrders} className="btn-secondary">
             <RefreshCw className="w-4 h-4" />
           </button>
         </div>
+      </div>
+
+      <div className="card space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-bold text-white">Packing Summary</h2>
+            <p className="text-xs text-brand-500">Total quantities across the currently filtered, non-cancelled orders.</p>
+          </div>
+          <span className="text-xs text-brand-400">{packingSummary.length} products</span>
+        </div>
+        {packingSummary.length === 0 ? <p className="text-xs text-brand-600">No items in the selected orders.</p> : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+            {packingSummary.map((item) => (
+              <div key={`${item.product_id}-${item.product_name}`} className="rounded-xl bg-surface-800 border border-surface-700 px-3 py-2">
+                <p className="text-sm font-semibold text-brand-200 truncate" title={item.product_name}>{item.product_name}</p>
+                <p className="text-lg font-bold text-emerald-300">{item.quantity} <span className="text-xs font-normal text-brand-500">{item.unit}</span></p>
+                <p className="text-[10px] text-brand-600">Across {item.order_count} order{item.order_count === 1 ? "" : "s"}</p>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Table */}
@@ -296,6 +400,15 @@ export default function Orders() {
                         >
                           <Edit3 className="w-3.5 h-3.5" />
                         </button>
+                        {(user?.role === "admin" || user?.role === "manager") && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleDeleteOrder(order); }}
+                            className="p-1 rounded text-red-500 hover:text-red-300 hover:bg-red-950/40"
+                            title="Delete Order"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                         <ChevronRight className="w-4 h-4 text-brand-600" />
                       </div>
                     </td>

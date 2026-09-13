@@ -431,6 +431,7 @@ def list_orders(
     payment_status: Optional[str] = None,
     search: Optional[str] = None,
     date_filter: Optional[str] = None,  # today | yesterday | week | late
+    rider: Optional[str] = None,
     limit: int = Query(200, le=1000),
     offset: int = 0,
     db: Session = Depends(get_db),
@@ -446,6 +447,8 @@ def list_orders(
         query = query.filter(models.Order.source == source)
     if payment_status:
         query = query.filter(models.Order.payment_status == payment_status)
+    if rider:
+        query = query.filter(models.Order.assigned_rider_name == rider)
     if search:
         term = f"%{search}%"
         query = query.filter(
@@ -484,6 +487,43 @@ def list_orders(
         .all()
     )
     return orders
+
+
+@router.get("/packing-summary")
+def get_packing_summary(
+    date_filter: Optional[str] = None,
+    rider: Optional[str] = None,
+    status: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Aggregate quantities required for warehouse packing from the matching orders."""
+    query = db.query(models.Order).filter(models.Order.status != "cancelled")
+    if rider:
+        query = query.filter(models.Order.assigned_rider_name == rider)
+    if status:
+        query = query.filter(models.Order.status == status)
+
+    now = datetime.utcnow()
+    if date_filter == "today":
+        query = query.filter(models.Order.created_at >= now.replace(hour=0, minute=0, second=0, microsecond=0))
+    elif date_filter == "yesterday":
+        yesterday = now - timedelta(days=1)
+        query = query.filter(models.Order.created_at.between(
+            yesterday.replace(hour=0, minute=0, second=0, microsecond=0),
+            yesterday.replace(hour=23, minute=59, second=59, microsecond=999999),
+        ))
+    elif date_filter == "week":
+        query = query.filter(models.Order.created_at >= now - timedelta(days=7))
+
+    totals = {}
+    for order in query.all():
+        for item in order.items:
+            key = (item.product_id, item.product_name, getattr(item.product, "unit", None) or "unit")
+            entry = totals.setdefault(key, {"product_id": item.product_id, "product_name": item.product_name, "unit": key[2], "quantity": 0, "order_count": 0})
+            entry["quantity"] += item.quantity or 0
+            entry["order_count"] += 1
+    return sorted(totals.values(), key=lambda item: item["product_name"].lower())
 
 
 @router.get("/{order_id}", response_model=schemas.OrderOut)
@@ -699,7 +739,7 @@ def get_riders_summary(
     riders_map = {}
 
     # Also list all user accounts with role 'rider'
-    rider_users = db.query(models.User).filter(models.User.role == "rider").all()
+    rider_users = db.query(models.User).filter(models.User.role == "rider", models.User.is_active == True).all()
     for ru in rider_users:
         riders_map[ru.name] = {
             "rider_id": ru.id,
