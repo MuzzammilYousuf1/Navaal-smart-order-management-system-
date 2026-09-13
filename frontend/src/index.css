@@ -176,6 +176,15 @@
   }
 }
 
+/* Financial figures are owner/manager-only by default. Non-finance staff can
+   still process orders, but amounts are visually masked wherever shown. */
+main[data-role="warehouse"] [data-sensitive-money],
+main[data-role="operations"] [data-sensitive-money],
+main[data-role="rider"] [data-sensitive-money] {
+  filter: blur(7px);
+  user-select: none;
+}
+
 /* Phone ergonomics: keep controls touch-sized and content clear of the menu. */
 @media (max-width: 767px) {
   main > .flex-1 {

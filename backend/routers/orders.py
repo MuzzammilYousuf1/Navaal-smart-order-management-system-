@@ -18,6 +18,19 @@ logger = logging.getLogger("orders")
 router = APIRouter(prefix="/api/orders", tags=["orders"])
 
 
+def _validate_rider_assignment(db: Session, rider_name: Optional[str]):
+    """Only active user accounts with the rider role may receive deliveries."""
+    if not rider_name:
+        return
+    rider = db.query(models.User).filter(
+        models.User.name.ilike(rider_name.strip()),
+        models.User.role == "rider",
+        models.User.is_active == True,
+    ).first()
+    if not rider:
+        raise HTTPException(status_code=400, detail="Select an active user account with the Rider role.")
+
+
 def _notify_b2c_dispatch(order: models.Order) -> None:
     """
     Fire-and-forget POST to n8n when a B2C order goes out for delivery.
@@ -90,6 +103,7 @@ def create_order(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
+    _validate_rider_assignment(db, data.assigned_rider_name)
     order_number = _generate_order_number(db)
     total = sum(item.unit_price * item.quantity for item in data.items)
 
@@ -498,6 +512,8 @@ def update_order(
     old_status = order.status
     update_data = data.model_dump(exclude_unset=True)
     items_data = update_data.pop("items", None)
+
+    _validate_rider_assignment(db, update_data.get("assigned_rider_name"))
 
     if "delivery_date" in update_data and isinstance(update_data["delivery_date"], str):
         try:

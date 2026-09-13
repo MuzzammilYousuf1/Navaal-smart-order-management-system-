@@ -379,8 +379,8 @@ export default function Orders() {
                     <td className="td"><ChannelBadge source={order.source} /></td>
                     <td className="td"><StatusBadge status={order.status} /></td>
                     <td className="td"><PaymentBadge payment_status={order.payment_status} /></td>
-                    <td className="td text-right text-brand-300 font-semibold whitespace-nowrap">PKR {(order.total_amount || 0).toLocaleString()}</td>
-                    <td className="td text-right text-brand-300 font-semibold whitespace-nowrap">PKR {(order.amount_received || 0).toLocaleString()}</td>
+                    <td data-sensitive-money className="td text-right text-brand-300 font-semibold whitespace-nowrap">PKR {(order.total_amount || 0).toLocaleString()}</td>
+                    <td data-sensitive-money className="td text-right text-brand-300 font-semibold whitespace-nowrap">PKR {(order.amount_received || 0).toLocaleString()}</td>
                     <td className="td">
                       <span className="text-xs font-medium text-brand-300">{order.assigned_rider_name || <span className="text-brand-700">—</span>}</span>
                     </td>

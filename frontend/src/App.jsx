@@ -24,10 +24,12 @@ import Tasks from "./pages/Tasks";
 import CustomerProfiles from "./pages/CustomerProfiles";
 import Accounts from "./pages/Accounts";
 import ActivityLog from "./pages/ActivityLog";
+import DataManagement from "./pages/DataManagement";
 
 function ProtectedLayout() {
   const [toasts, setToasts] = useState([]);
   const [alertCount, setAlertCount] = useState(0);
+  const { user } = useAuth();
 
   const handleWsMessage = useCallback((data) => {
     if (data.type === "sla_alert") {
@@ -48,7 +50,7 @@ function ProtectedLayout() {
   return (
     <div className="flex h-screen overflow-hidden">
       <Sidebar alertCount={alertCount} />
-      <main className="flex-1 flex flex-col overflow-hidden">
+      <main data-role={user?.role || "warehouse"} className="flex-1 flex flex-col overflow-hidden">
         <Routes>
           <Route path="/"               element={<Dashboard />} />
           <Route path="/orders"         element={<Orders />} />
@@ -68,6 +70,7 @@ function ProtectedLayout() {
           <Route path="/users"          element={<RequireRole roles={["admin", "manager"]}><Users /></RequireRole>} />
           <Route path="/tasks"          element={<Tasks />} />
           <Route path="/activity"       element={<ActivityLog />} />
+          <Route path="/data"           element={<RequireRole roles={["admin", "manager"]}><DataManagement /></RequireRole>} />
           <Route path="*"               element={<Navigate to="/" />} />
         </Routes>
       </main>

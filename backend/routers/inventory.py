@@ -242,6 +242,13 @@ def restock_product(
     db.refresh(p)
 
     try:
+        from email_reports import send_restock_email_alert
+        stock_map = {x.id: x.stock_qty for x in db.query(models.Product.id, models.Product.stock_qty).all()}
+        send_restock_email_alert(db, p.name, data.quantity, compute_stock_qty(p, stock_map), p.unit, current_user.name)
+    except Exception:
+        pass
+
+    try:
         from routers.audit_log import log_action
         log_action(db, current_user, "restock", "product", p.id, p.name,
                    f"Restocked {p.name}: +{data.quantity} {p.unit}s. New stock: {p.stock_qty} {p.unit}s")

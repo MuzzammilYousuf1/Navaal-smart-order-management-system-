@@ -166,6 +166,22 @@ def clear_products(
     return {"message": "All products and stock movements cleared."}
 
 
+@router.delete("/reset-customer-ledger")
+def reset_customer_and_ledger(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Start a clean customer book and ledger without touching orders/products/users."""
+    if current_user.role not in ("admin", "manager"):
+        raise HTTPException(status_code=403, detail="Only an admin or manager can reset customer data")
+    db.query(models.LedgerEntry).delete(synchronize_session=False)
+    db.query(models.AccountInvoice).delete(synchronize_session=False)
+    db.query(models.CustomerAttachment).delete(synchronize_session=False)
+    db.query(models.Customer).delete(synchronize_session=False)
+    db.commit()
+    return {"message": "Address book, customer accounts, invoices, and ledger entries were reset. Orders and products were kept."}
+
+
 # ─── CSV Template Downloads ───────────────────────────────────────────────────
 
 @router.get("/template/products")

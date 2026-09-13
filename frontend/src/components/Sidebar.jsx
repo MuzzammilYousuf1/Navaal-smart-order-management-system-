@@ -1,6 +1,6 @@
 import { NavLink, useNavigate } from "react-router-dom";
 import {
-  LayoutDashboard, Package, PlusCircle, BarChart2,
+  LayoutDashboard, Package, PlusCircle, BarChart2, Settings,
   Bell, Users, LogOut, Leaf, Menu, X, MapPin, Boxes, ClipboardList, QrCode, FileText, Calendar, BookUser, Wallet, Activity
 } from "lucide-react";
 import useAuth from "../store/useAuth";
@@ -23,6 +23,7 @@ const navItems = [
   { to: "/notifications", icon: Bell,            label: "Alerts" },
   { to: "/users",         icon: Users,           label: "Users" },
   { to: "/activity",      icon: Activity,        label: "Activity Log" },
+  { to: "/data",          icon: Settings,        label: "Data Management" },
 ];
 
 export default function Sidebar({ alertCount = 0 }) {
@@ -76,7 +77,7 @@ export default function Sidebar({ alertCount = 0 }) {
             if (role === "admin" || role === "manager") return true;
             if (role === "rider") return ["/orders", "/tracking", "/notifications", "/activity"].includes(to);
             // Warehouse & Operations
-            const restricted = ["/accounts", "/invoices", "/reporting", "/reports", "/users"];
+            const restricted = ["/accounts", "/invoices", "/reporting", "/reports", "/users", "/data"];
             return !restricted.includes(to);
           })
           .map(({ to, icon: Icon, label }) => (

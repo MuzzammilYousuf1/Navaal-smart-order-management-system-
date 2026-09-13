@@ -57,6 +57,17 @@ export default function DataManagement() {
     }
   };
 
+  const handleResetCustomerLedger = async () => {
+    if (!window.confirm("Reset the current address book and customer accounts/ledger? Orders, products, and users will remain.")) return;
+    setLoading("reset-customer-ledger");
+    try {
+      const { data } = await api.delete("/api/data/reset-customer-ledger");
+      showStatus(`✅ ${data.message}`, "success");
+    } catch (err) {
+      showStatus(`❌ ${err.response?.data?.detail || "Reset failed"}`, "error");
+    } finally { setLoading(""); }
+  };
+
   // ── CSV Template downloads ─────────────────────────────────────────────────
   const downloadTemplate = (type) => {
     const token = localStorage.getItem("sof_token");
@@ -188,6 +199,14 @@ export default function DataManagement() {
               >
                 <Trash2 className="w-3.5 h-3.5" />
                 {loading === "clear-all" ? "Clearing..." : "Full Data Reset"}
+              </button>
+            </div>
+
+            <div className="p-3 bg-purple-950/20 rounded-xl border border-purple-800/50 space-y-2">
+              <p className="text-xs font-bold text-purple-300">Start Fresh: Address Book & Accounts</p>
+              <p className="text-xs text-brand-500">Removes current customer profiles, invoices, attachments, and ledger entries. Existing orders and products stay safe.</p>
+              <button onClick={handleResetCustomerLedger} disabled={loading === "reset-customer-ledger"} className="btn-secondary text-xs border-purple-700/50 text-purple-300">
+                <RefreshCw className="w-3.5 h-3.5" /> {loading === "reset-customer-ledger" ? "Resetting..." : "Reset Address Book & Ledger"}
               </button>
             </div>
           </div>

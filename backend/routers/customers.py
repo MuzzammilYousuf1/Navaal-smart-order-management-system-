@@ -19,6 +19,22 @@ from auth import get_current_user
 router = APIRouter(prefix="/api/customers", tags=["customers"])
 
 
+def _validate_preferred_rider(db: Session, preferred_rider: Optional[str]) -> None:
+    """Only an active user account with the rider role may be assigned."""
+    if not preferred_rider or not preferred_rider.strip():
+        return
+    rider = db.query(models.User).filter(
+        models.User.name.ilike(preferred_rider.strip()),
+        models.User.role == "rider",
+        models.User.is_active == True,
+    ).first()
+    if not rider:
+        raise HTTPException(
+            status_code=400,
+            detail="Select an active user account with the Rider role.",
+        )
+
+
 def _upsert_customer_from_order(db: Session, order: models.Order, items_json: Optional[str] = None):
     """
     Called after an order is placed/completed to keep the address book up to date.
@@ -92,6 +108,7 @@ def create_or_update_customer(
     current_user: models.User = Depends(get_current_user),
 ):
     """Manually create or update a customer in the address book."""
+    _validate_preferred_rider(db, data.preferred_rider)
     # Try to find existing by phone, then name
     customer = None
     if data.phone:
@@ -124,6 +141,7 @@ def update_customer(
     customer = db.query(models.Customer).filter(models.Customer.id == customer_id).first()
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
+    _validate_preferred_rider(db, data.preferred_rider)
     for field, value in data.model_dump(exclude_unset=True).items():
         if value is not None:
             setattr(customer, field, value)
@@ -172,7 +190,7 @@ def sync_customers_from_orders(
     synced = 0
     for order in orders:
         items_data = [
-            {"product_name": it.product_name, "quantity": it.quantity, "unit_price": it.unit_price}
+            {"product_id": it.product_id, "product_name": it.product_name, "quantity": it.quantity, "unit_price": it.unit_price}
             for it in order.items
         ] if order.items else []
         _upsert_customer_from_order(db, order, json.dumps(items_data) if items_data else None)

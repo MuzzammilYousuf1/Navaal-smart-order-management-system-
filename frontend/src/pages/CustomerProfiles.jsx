@@ -14,6 +14,7 @@ export default function CustomerProfiles() {
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [statusMsg, setStatusMsg] = useState("");
+  const [riders, setRiders] = useState([]);
 
   // Create / Edit Modal State
   const [showModal, setShowModal] = useState(false);
@@ -113,6 +114,10 @@ export default function CustomerProfiles() {
   useEffect(() => {
     fetchCustomers(query);
   }, [query]);
+
+  useEffect(() => {
+    api.get("/api/users/").then(({ data }) => setRiders(data.filter((u) => u.role === "rider" && u.is_active))).catch(() => {});
+  }, []);
 
   const handleSyncAddressBook = async () => {
     setSyncing(true);
@@ -450,13 +455,15 @@ export default function CustomerProfiles() {
 
               <div>
                 <label className="label">Preferred Rider Name (Optional)</label>
-                <input
-                  type="text"
+                <select
                   className="input"
-                  placeholder="e.g. Ali Rider"
                   value={custForm.preferred_rider}
                   onChange={(e) => setCustForm({ ...custForm, preferred_rider: e.target.value })}
-                />
+                >
+                  <option value="">No preferred rider</option>
+                  {riders.map((r) => <option key={r.id} value={r.name}>{r.name}</option>)}
+                </select>
+                <p className="text-[10px] text-brand-600 mt-1">Only active Rider accounts can be selected.</p>
               </div>
 
               <div>

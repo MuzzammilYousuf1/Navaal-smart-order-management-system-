@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { ArrowLeft, Plus, Trash2, Package, MapPin, ExternalLink, RefreshCw, AlertCircle } from "lucide-react";
 import api, { getErrorMessage } from "../api/client";
 import CustomerAutocomplete from "../components/CustomerAutocomplete";
@@ -21,12 +21,21 @@ const DEFAULT_FORM = {
 
 export default function NewOrder() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [form, setForm] = useState(DEFAULT_FORM);
   const [items, setItems] = useState([{ product_id: "", product_name: "", quantity: 1, unit_price: 0 }]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [products, setProducts] = useState([]);
   const [prefilled, setPrefilled] = useState(false);
+
+  useEffect(() => {
+    if (location.state?.customer) {
+      handleCustomerSelect(location.state.customer);
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state]);
 
   useEffect(() => {
     api.get("/api/inventory/products")

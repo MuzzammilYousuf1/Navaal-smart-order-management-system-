@@ -78,7 +78,7 @@ export default function Dashboard() {
           <KPICard label="Out for Delivery"  value={stats.out_for_delivery} icon={Truck}        color="blue" />
           <KPICard label="Late Orders 🔴"   value={stats.late_orders}      icon={AlertTriangle} color="red" />
           <KPICard label="Revenue Today"
-            value={`PKR ${(stats.revenue_today || 0).toLocaleString()}`}
+            value={<span data-sensitive-money>{`PKR ${(stats.revenue_today || 0).toLocaleString()}`}</span>}
             icon={DollarSign} color="green"
           />
           <KPICard label="Avg Packing"
@@ -173,7 +173,7 @@ function LiveOrderTable({ title, color, orders, navigate, emptyMsg, showTimer })
               <p className="text-xs text-brand-600 truncate">{order.city}</p>
               <div className="flex items-center justify-between mt-2">
                 <span className="text-xs text-brand-500">
-                  PKR {(order.total_amount || 0).toLocaleString()}
+                  <span data-sensitive-money>PKR {(order.total_amount || 0).toLocaleString()}</span>
                 </span>
                 {showTimer && (
                   <LiveTimer pickupDeadline={order.pickup_deadline} status={order.status} />
