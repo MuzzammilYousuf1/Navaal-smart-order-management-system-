@@ -173,7 +173,7 @@ function LiveOrderTable({ title, color, orders, navigate, emptyMsg, showTimer })
               <p className="text-xs text-brand-600 truncate">{order.city}</p>
               <div className="flex items-center justify-between mt-2">
                 <span className="text-xs text-brand-500">
-                  <span data-sensitive-money>PKR {(order.total_amount || 0).toLocaleString()}</span>
+                  <span>PKR {(order.total_amount || 0).toLocaleString()}</span>
                 </span>
                 {showTimer && (
                   <LiveTimer pickupDeadline={order.pickup_deadline} status={order.status} />

@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import {
   Boxes, AlertTriangle, Plus, RefreshCw, ArrowUpRight, ArrowDownRight, PackageCheck,
-  Upload, Download, Trash2, CheckCircle, FileSpreadsheet, Bot, BotOff, Edit3
+  Trash2, CheckCircle, Bot, BotOff, Edit3
 } from "lucide-react";
-import api, { API_BASE } from "../api/client";
+import api from "../api/client";
 import useAuth from "../store/useAuth";
 
 // ── Unit display helpers ───────────────────────────────────────────────────────
@@ -82,11 +82,8 @@ export default function Inventory() {
     base_product_id: "", unit_multiplier: 1.0
   });
 
-  // CSV Data Management state
-  const [csvLoading, setCsvLoading] = useState(false);
   const [statusMsg, setStatusMsg] = useState("");
   const [statusType, setStatusType] = useState(""); // "success" | "error"
-  const [importErrors, setImportErrors] = useState([]);
 
   const showStatus = (msg, type = "success") => {
     setStatusMsg(msg);
@@ -227,48 +224,6 @@ export default function Inventory() {
     }
   };
 
-  // CSV handlers
-  const handleClearProducts = async () => {
-    if (!window.confirm("DANGER: This will delete ALL product catalog items and stock movements. Are you sure?")) return;
-    setCsvLoading(true);
-    try {
-      const { data } = await api.delete("/api/data/clear-products");
-      showStatus(data.message, "success");
-      fetchData();
-    } catch (err) {
-      showStatus(err.response?.data?.detail || "Failed to clear products", "error");
-    } finally {
-      setCsvLoading(false);
-    }
-  };
-
-  const downloadTemplate = () => {
-    const token = localStorage.getItem("sof_token");
-    window.open(`${API_BASE}/api/data/template/products?token=${encodeURIComponent(token)}`, "_blank");
-  };
-
-  const handleImportProducts = async (file) => {
-    if (!file) return;
-    setCsvLoading(true);
-    setImportErrors([]);
-    const formData = new FormData();
-    formData.append("file", file);
-    try {
-      const { data } = await api.post("/api/data/import/products", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-      showStatus(data.message, "success");
-      if (data.errors?.length > 0) {
-        setImportErrors(data.errors);
-      }
-      fetchData();
-    } catch (err) {
-      showStatus(err.response?.data?.detail || "Import failed", "error");
-    } finally {
-      setCsvLoading(false);
-    }
-  };
-
   const handleDeleteProduct = async (prodId, prodName) => {
     if (!window.confirm(`Are you sure you want to remove '${prodName}' from the inventory catalog?`)) return;
     try {
@@ -311,38 +266,6 @@ export default function Inventory() {
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {/* Download template */}
-          <button
-            onClick={downloadTemplate}
-            className="btn-secondary text-xs text-brand-300 border-brand-700/50"
-            title="Download Excel / CSV template for products"
-          >
-            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" /> Template
-          </button>
-
-          {/* Import */}
-          <label className="btn-secondary text-xs text-brand-300 border-brand-700/50 cursor-pointer">
-            <Upload className="w-3.5 h-3.5 text-amber-400" />
-            <span>{csvLoading ? "Processing..." : "Import CSV"}</span>
-            <input
-              type="file"
-              accept=".csv"
-              className="hidden"
-              disabled={csvLoading}
-              onChange={(e) => handleImportProducts(e.target.files[0])}
-            />
-          </label>
-
-          {/* Clear Catalog */}
-          <button
-            onClick={handleClearProducts}
-            disabled={csvLoading}
-            className="btn-secondary text-xs border-red-800/40 text-red-400 hover:bg-red-950/20"
-            title="Delete all product catalog entries"
-          >
-            <Trash2 className="w-3.5 h-3.5" /> Clear Products
-          </button>
-
           <button onClick={fetchData} className="btn-secondary text-xs">
             <RefreshCw className="w-3.5 h-3.5" /> Refresh
           </button>
@@ -367,21 +290,6 @@ export default function Inventory() {
         </div>
       )}
 
-      {/* Import Errors / Warnings */}
-      {importErrors.length > 0 && (
-        <div className="card bg-amber-950/30 border-amber-700/50 space-y-2">
-          <p className="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1">
-            <AlertTriangle className="w-4 h-4" /> Import Warnings ({importErrors.length} products failed)
-          </p>
-          <div className="space-y-1 max-h-32 overflow-y-auto">
-            {importErrors.map((err, i) => (
-              <p key={i} className="text-xs text-amber-300 font-mono">{err}</p>
-            ))}
-          </div>
-        </div>
-      )}
-
-
       {/* KPI Cards */}
       {summary && (
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -405,7 +313,7 @@ export default function Inventory() {
 
           <div className="card bg-surface-900 border-surface-700">
             <p className="text-xs text-emerald-400 font-semibold uppercase tracking-wider">Total Inventory Value</p>
-            <p className="text-2xl font-bold text-emerald-300 mt-1">PKR {summary.total_inventory_value.toLocaleString()}</p>
+            <p data-sensitive-money className="text-2xl font-bold text-emerald-300 mt-1">PKR {summary.total_inventory_value.toLocaleString()}</p>
             <p className="text-xs text-brand-600 mt-1">Cost value of current stock</p>
           </div>
         </div>

@@ -1,8 +1,8 @@
 import { useEffect, useState, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-  Search, Filter, RefreshCw, Plus, ChevronRight, FileSpreadsheet,
-  Upload, Download, Trash2, CheckCircle, AlertTriangle, MapPin, Edit3, Truck, Package
+  Search, Filter, RefreshCw, Plus, ChevronRight,
+  CheckCircle, AlertTriangle, MapPin, Edit3, Truck, Package
 } from "lucide-react";
 import api from "../api/client";
 import { StatusBadge, PriorityBadge, PaymentBadge } from "../components/StatusBadge";
@@ -10,7 +10,6 @@ import LiveTimer from "../components/LiveTimer";
 import EditOrderModal from "../components/EditOrderModal";
 import RiderGatePassModal from "../components/RiderGatePassModal";
 import { format } from "date-fns";
-import { API_BASE } from "../api/client";
 
 // Channel badge helper
 function ChannelBadge({ source }) {
@@ -83,11 +82,9 @@ export default function Orders() {
   });
   const navigate = useNavigate();
 
-  // CSV & Gate Pass state
-  const [csvLoading, setCsvLoading] = useState(false);
+  // Gate Pass state
   const [statusMsg, setStatusMsg] = useState("");
   const [statusType, setStatusType] = useState("");
-  const [importErrors, setImportErrors] = useState([]);
   const [editingOrder, setEditingOrder] = useState(null);
   const [showGatePassModal, setShowGatePassModal] = useState(false);
 
@@ -133,62 +130,6 @@ export default function Orders() {
 
   const setFilter = (key, val) => setFilters((f) => ({ ...f, [key]: val }));
 
-  // CSV handlers
-  const handleClearOrders = async () => {
-    if (!window.confirm("⚠️ DANGER: This will permanently DELETE all orders and status history. Products and users will remain. Are you sure?")) return;
-    setCsvLoading(true);
-    try {
-      const { data } = await api.delete("/api/data/clear-orders");
-      showStatus(`✅ ${data.message}`, "success");
-      fetchOrders();
-    } catch (err) {
-      showStatus(`❌ ${err.response?.data?.detail || "Failed to clear orders"}`, "error");
-    } finally {
-      setCsvLoading(false);
-    }
-  };
-
-  const downloadTemplate = () => {
-    const token = localStorage.getItem("sof_token");
-    window.open(`${API_BASE}/api/data/template/orders?token=${encodeURIComponent(token)}`, "_blank");
-  };
-
-  const handleExportOrders = () => {
-    api.get("/api/data/export/orders", { responseType: "blob" })
-      .then(({ data }) => {
-        const url = URL.createObjectURL(data);
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = "navaal_orders.csv";
-        link.click();
-        URL.revokeObjectURL(url);
-      })
-      .catch(() => showStatus("Could not export orders", "error"));
-  };
-
-  const handleImportOrders = async (file) => {
-    if (!file) return;
-    setCsvLoading(true);
-    setImportErrors([]);
-    const formData = new FormData();
-    formData.append("file", file);
-    try {
-      const { data } = await api.post("/api/data/import/orders", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-      const fmtLabel = { b2b_sales: "B2B Sales", daily_orders: "Daily Orders", generic: "Generic" }[data.format_detected] || data.format_detected;
-      showStatus(`✅ ${data.message} (Detected format: ${fmtLabel})`, "success");
-      if (data.errors?.length > 0) {
-        setImportErrors(data.errors);
-      }
-      fetchOrders();
-    } catch (err) {
-      showStatus(`❌ ${err.response?.data?.detail || "Import failed"}`, "error");
-    } finally {
-      setCsvLoading(false);
-    }
-  };
-
   return (
     <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5 pt-14 sm:pt-6">
       {/* Header */}
@@ -201,7 +142,6 @@ export default function Orders() {
           {/* Fast Auto RTS */}
           <button
             onClick={handleBulkRts}
-            disabled={csvLoading}
             className="btn-secondary text-xs text-amber-300 border-amber-800/60 bg-amber-950/30 hover:bg-amber-900/40"
             title="Mark all pending orders as Ready to Ship"
           >
@@ -215,47 +155,6 @@ export default function Orders() {
             title="Create rider gate pass slips & set orders out for delivery"
           >
             <Truck className="w-3.5 h-3.5 text-emerald-400" /> Rider Gate Pass
-          </button>
-
-          {/* Export */}
-          <button
-            onClick={handleExportOrders}
-            className="btn-secondary text-xs text-brand-300 border-brand-700/50"
-            title="Download CSV backup of all current orders"
-          >
-            <Download className="w-3.5 h-3.5 text-brand-400" /> Export CSV
-          </button>
-
-          {/* Download template */}
-          <button
-            onClick={downloadTemplate}
-            className="btn-secondary text-xs text-brand-300 border-brand-700/50"
-            title="Download Excel / CSV template for importing orders"
-          >
-            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" /> Template
-          </button>
-
-          {/* Import */}
-          <label className="btn-secondary text-xs text-brand-300 border-brand-700/50 cursor-pointer">
-            <Upload className="w-3.5 h-3.5 text-amber-400" />
-            <span>{csvLoading ? "Processing..." : "Import CSV"}</span>
-            <input
-              type="file"
-              accept=".csv"
-              className="hidden"
-              disabled={csvLoading}
-              onChange={(e) => handleImportOrders(e.target.files[0])}
-            />
-          </label>
-
-          {/* Clear Orders */}
-          <button
-            onClick={handleClearOrders}
-            disabled={csvLoading}
-            className="btn-secondary text-xs border-red-800/40 text-red-400 hover:bg-red-950/20"
-            title="Delete all current orders (Full Reset)"
-          >
-            <Trash2 className="w-3.5 h-3.5" /> Clear Orders
           </button>
 
           {/* New Order */}
@@ -279,21 +178,6 @@ export default function Orders() {
           <p className="text-sm font-medium">{statusMsg}</p>
         </div>
       )}
-
-      {/* Import Errors / Warnings */}
-      {importErrors.length > 0 && (
-        <div className="card bg-amber-950/30 border-amber-700/50 space-y-2">
-          <p className="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1">
-            <AlertTriangle className="w-4 h-4" /> Import Warnings ({importErrors.length} rows failed)
-          </p>
-          <div className="space-y-1 max-h-32 overflow-y-auto">
-            {importErrors.map((err, i) => (
-              <p key={i} className="text-xs text-amber-300 font-mono">{err}</p>
-            ))}
-          </div>
-        </div>
-      )}
-
 
       {/* Filters */}
       <div className="card">
@@ -379,8 +263,8 @@ export default function Orders() {
                     <td className="td"><ChannelBadge source={order.source} /></td>
                     <td className="td"><StatusBadge status={order.status} /></td>
                     <td className="td"><PaymentBadge payment_status={order.payment_status} /></td>
-                    <td data-sensitive-money className="td text-right text-brand-300 font-semibold whitespace-nowrap">PKR {(order.total_amount || 0).toLocaleString()}</td>
-                    <td data-sensitive-money className="td text-right text-brand-300 font-semibold whitespace-nowrap">PKR {(order.amount_received || 0).toLocaleString()}</td>
+                    <td className="td text-right text-brand-300 font-semibold whitespace-nowrap">PKR {(order.total_amount || 0).toLocaleString()}</td>
+                    <td className="td text-right text-brand-300 font-semibold whitespace-nowrap">PKR {(order.amount_received || 0).toLocaleString()}</td>
                     <td className="td">
                       <span className="text-xs font-medium text-brand-300">{order.assigned_rider_name || <span className="text-brand-700">—</span>}</span>
                     </td>

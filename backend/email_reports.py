@@ -30,6 +30,24 @@ _raw_password = os.getenv("SMTP_PASSWORD", "")
 SMTP_PASSWORD = _raw_password.replace(" ", "").strip()
 SMTP_FROM_EMAIL = os.getenv("SMTP_FROM_EMAIL", "").strip()
 REPORT_RECIPIENT_EMAIL = os.getenv("REPORT_RECIPIENT_EMAIL", "").strip()
+
+EMAIL_AUTOMATIONS = {
+    "daily_report": {"label": "Nightly operations report", "trigger": "Scheduled daily", "default_time": "23:50", "default_enabled": True},
+    "low_stock": {"label": "Low-stock / backorder alert", "trigger": "Immediately when stock is insufficient", "default_time": None, "default_enabled": True},
+    "restock": {"label": "Inventory received alert", "trigger": "Immediately after restocking", "default_time": None, "default_enabled": True},
+    "sla_alerts": {"label": "SLA delay and escalation alert", "trigger": "Immediately at 45/60/75/90 minute delays", "default_time": None, "default_enabled": False},
+}
+
+
+def is_email_automation_enabled(db: Session, key: str) -> bool:
+    row = db.query(models.Settings).filter(models.Settings.key == f"email.{key}.enabled").first()
+    default_enabled = EMAIL_AUTOMATIONS.get(key, {}).get("default_enabled", True)
+    return (row.value.lower() != "false") if row and row.value is not None else default_enabled
+
+
+def get_email_setting(db: Session, key: str, default: Optional[str] = None) -> Optional[str]:
+    row = db.query(models.Settings).filter(models.Settings.key == key).first()
+    return row.value if row and row.value is not None else default
 REPORT_SEND_TIME = os.getenv("REPORT_SEND_TIME", "23:50")  # Default to 11:50 PM daily
 
 
@@ -808,6 +826,8 @@ def send_low_stock_email_alert(db: Session, product_name: str, available_qty: fl
     """
     Sends an immediate email notification when an order attempt fails due to low/insufficient stock.
     """
+    if not is_email_automation_enabled(db, "low_stock"):
+        return False
     recipients = [REPORT_RECIPIENT_EMAIL] if REPORT_RECIPIENT_EMAIL else []
     try:
         user_emails = db.query(models.User.email).filter(
@@ -855,6 +875,8 @@ def send_low_stock_email_alert(db: Session, product_name: str, available_qty: fl
 
 def send_restock_email_alert(db: Session, product_name: str, added_qty: float, new_qty: float, unit: str = "units", added_by: str = "System") -> bool:
     """Notify the owner/management when inventory is received, not only when it is low."""
+    if not is_email_automation_enabled(db, "restock"):
+        return False
     recipients = [REPORT_RECIPIENT_EMAIL] if REPORT_RECIPIENT_EMAIL else []
     try:
         for (email,) in db.query(models.User.email).filter(
@@ -886,6 +908,44 @@ def send_restock_email_alert(db: Session, product_name: str, added_qty: float, n
         logger.exception("Failed to send restock email alert")
         return False
 
+
+def send_sla_email_alert(db: Session, subject: str, message: str) -> bool:
+    """Email management when an order crosses an SLA delay threshold."""
+    if not is_email_automation_enabled(db, "sla_alerts"):
+        return False
+    recipients = [REPORT_RECIPIENT_EMAIL] if REPORT_RECIPIENT_EMAIL else []
+    try:
+        for (email,) in db.query(models.User.email).filter(
+            models.User.is_active == True,
+            models.User.email.isnot(None),
+            models.User.role.in_(["admin", "manager"]),
+        ).all():
+            if email and email.strip() and email.strip() not in recipients:
+                recipients.append(email.strip())
+    except Exception:
+        pass
+    if not recipients or not SMTP_HOST or not SMTP_PORT or not SMTP_USERNAME or not SMTP_PASSWORD or not SMTP_FROM_EMAIL:
+        return False
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = SMTP_FROM_EMAIL
+    msg["To"] = ", ".join(recipients)
+    msg.attach(MIMEText(f"<h2>{subject}</h2><p>{message}</p>", "html"))
+    try:
+        server = smtplib.SMTP(SMTP_HOST, SMTP_PORT)
+        server.ehlo()
+        if SMTP_PORT == 587:
+            server.starttls()
+            server.ehlo()
+        server.login(SMTP_USERNAME, SMTP_PASSWORD)
+        server.sendmail(SMTP_FROM_EMAIL, recipients, msg.as_string())
+        server.quit()
+        logger.info("SLA email alert sent for [%s]", subject)
+        return True
+    except Exception:
+        logger.exception("Failed to send SLA email alert")
+        return False
+
 def send_daily_report_email_job():
     """
     Scheduler job wrapper that handles Session creation.
@@ -903,20 +963,29 @@ def schedule_daily_report(scheduler: AsyncIOScheduler):
     """
     Parses configured send time and adds daily cron job to APScheduler.
     """
-    time_str = os.getenv("REPORT_SEND_TIME", "23:50")
+    db = SessionLocal()
+    try:
+        enabled = is_email_automation_enabled(db, "daily_report")
+        time_str = get_email_setting(db, "email.daily_report.time", os.getenv("REPORT_SEND_TIME", "23:50"))
+    finally:
+        db.close()
     try:
         hour, minute = map(int, time_str.split(":"))
     except Exception:
         logger.error(f"Invalid REPORT_SEND_TIME format '{time_str}'. Expected HH:MM. Defaulting to 23:50.")
         hour, minute = 23, 50
 
-    logger.info(f"Scheduling nightly email report job at {hour:02d}:{minute:02d} daily.")
-    
     # Remove existing job if present to support live re-scheduling
     try:
         scheduler.remove_job("daily_email_report")
     except Exception:
         pass
+
+    if not enabled:
+        logger.info("Nightly email report is disabled.")
+        return
+
+    logger.info(f"Scheduling nightly email report job at {hour:02d}:{minute:02d} daily.")
 
     scheduler.add_job(
         send_daily_report_email_job,

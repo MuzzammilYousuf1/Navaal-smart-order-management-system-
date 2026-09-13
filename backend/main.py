@@ -20,7 +20,7 @@ from jose import jwt
 from auth import SECRET_KEY, ALGORITHM
 import models
 from sla_engine import run_sla_check, set_ws_manager
-from routers import auth, orders, dashboard, reports, notifications, users, tracking, inventory, invoices, data_mgmt, customers, subscriptions, tasks, chat, webhook_n8n, ledger, accounts, audit_log
+from routers import auth, orders, dashboard, reports, notifications, users, tracking, inventory, invoices, customers, subscriptions, tasks, chat, webhook_n8n, ledger, accounts, audit_log
 
 
 logging.basicConfig(level=logging.INFO)
@@ -321,7 +321,6 @@ app.include_router(users.router)
 app.include_router(tracking.router)
 app.include_router(inventory.router)
 app.include_router(invoices.router)
-app.include_router(data_mgmt.router)
 app.include_router(customers.router)
 app.include_router(subscriptions.router)
 app.include_router(tasks.router)

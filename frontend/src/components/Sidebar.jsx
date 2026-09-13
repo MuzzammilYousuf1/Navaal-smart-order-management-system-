@@ -23,7 +23,7 @@ const navItems = [
   { to: "/notifications", icon: Bell,            label: "Alerts" },
   { to: "/users",         icon: Users,           label: "Users" },
   { to: "/activity",      icon: Activity,        label: "Activity Log" },
-  { to: "/data",          icon: Settings,        label: "Data Management" },
+  { to: "/email-settings", icon: Settings,      label: "Email Automation" },
 ];
 
 export default function Sidebar({ alertCount = 0 }) {
@@ -77,7 +77,7 @@ export default function Sidebar({ alertCount = 0 }) {
             if (role === "admin" || role === "manager") return true;
             if (role === "rider") return ["/orders", "/tracking", "/notifications", "/activity"].includes(to);
             // Warehouse & Operations
-            const restricted = ["/accounts", "/invoices", "/reporting", "/reports", "/users", "/data"];
+            const restricted = ["/accounts", "/invoices", "/reporting", "/reports", "/users", "/email-settings"];
             return !restricted.includes(to);
           })
           .map(({ to, icon: Icon, label }) => (

@@ -46,6 +46,13 @@ def _log_notification(
     db.add(log)
     db.commit()
 
+    # Email is optional and controlled from Email Automation settings.
+    try:
+        from email_reports import send_sla_email_alert
+        send_sla_email_alert(db, subject, message)
+    except Exception as e:
+        logger.warning(f"SLA email alert failed: {e}")
+
     # Push real-time alert to connected dashboard clients
     if _ws_manager:
         import asyncio
@@ -172,4 +179,3 @@ def broadcast_ws_message(message: dict):
                 asyncio.ensure_future(_ws_manager.broadcast(message))
         except Exception:
             pass
-

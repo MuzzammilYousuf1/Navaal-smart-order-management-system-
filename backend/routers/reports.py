@@ -1,16 +1,82 @@
 from typing import List, Optional
 from datetime import datetime, timedelta
+import os
 
-from fastapi import APIRouter, Depends, Query, Header
+from fastapi import APIRouter, Depends, Query, Header, HTTPException
 from fastapi.security import HTTPBearer
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import func, case
 
 from database import get_db
 import models
-from auth import get_current_user, bearer_scheme
+from auth import get_current_user, bearer_scheme, require_roles
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
+
+
+class EmailAutomationUpdate(BaseModel):
+    key: str
+    enabled: bool
+    send_time: Optional[str] = None
+
+
+@router.get("/email-settings")
+def get_email_settings(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_roles("admin", "manager")),
+):
+    from email_reports import EMAIL_AUTOMATIONS, get_email_setting
+    result = []
+    for key, meta in EMAIL_AUTOMATIONS.items():
+        result.append({
+            "key": key,
+            "label": meta["label"],
+            "trigger": meta["trigger"],
+            "enabled": get_email_setting(db, f"email.{key}.enabled", "true" if meta.get("default_enabled", True) else "false").lower() != "false",
+            "send_time": get_email_setting(db, f"email.{key}.time", meta["default_time"]),
+        })
+    return {"smtp_configured": bool(os.getenv("SMTP_HOST") and os.getenv("SMTP_USERNAME") and os.getenv("SMTP_PASSWORD") and os.getenv("SMTP_FROM_EMAIL")), "items": result}
+
+
+@router.put("/email-settings")
+def update_email_settings(
+    data: EmailAutomationUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_roles("admin", "manager")),
+):
+    from email_reports import EMAIL_AUTOMATIONS
+    if data.key not in EMAIL_AUTOMATIONS:
+        raise HTTPException(status_code=400, detail="Unknown email automation.")
+    if data.key == "daily_report" and data.send_time:
+        try:
+            hour, minute = map(int, data.send_time.split(":"))
+            if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                raise ValueError
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Send time must use HH:MM format.")
+
+    def save(key: str, value: str):
+        row = db.query(models.Settings).filter(models.Settings.key == key).first()
+        if not row:
+            row = models.Settings(key=key)
+            db.add(row)
+        row.value = value
+        row.updated_at = datetime.utcnow()
+
+    save(f"email.{data.key}.enabled", "true" if data.enabled else "false")
+    if data.key == "daily_report" and data.send_time:
+        save("email.daily_report.time", data.send_time)
+    db.commit()
+
+    if data.key == "daily_report":
+        from email_reports import schedule_daily_report
+        try:
+            from main import scheduler
+            schedule_daily_report(scheduler)
+        except Exception:
+            pass
+    return {"status": "success", "message": "Email automation settings saved."}
 
 
 def _get_date_range(days: int = 7, start_date: Optional[str] = None, end_date: Optional[str] = None):
@@ -41,7 +107,7 @@ def get_overview(
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_roles("admin", "manager")),
 ):
     """Day-by-day order count and revenue for the selected timeframe."""
     s_dt, e_dt = _get_date_range(days, start_date, end_date)
@@ -97,7 +163,7 @@ def get_by_status(
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_roles("admin", "manager")),
 ):
     """Order count breakdown by status for selected date range."""
     s_dt, e_dt = _get_date_range(days, start_date, end_date)
@@ -119,7 +185,7 @@ def get_by_source(
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_roles("admin", "manager")),
 ):
     """Order count and revenue breakdown by order source for selected date range."""
     s_dt, e_dt = _get_date_range(days, start_date, end_date)
@@ -152,7 +218,7 @@ def get_by_source(
 @router.get("/rider-performance")
 def get_rider_performance(
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_roles("admin", "manager")),
 ):
     """Detailed order dispatch and cash collection metrics per rider."""
     results = (
@@ -186,7 +252,7 @@ def get_rider_performance(
 @router.get("/staff-performance")
 def get_staff_performance(
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_roles("admin", "manager")),
 ):
     users = db.query(models.User).filter(
         models.User.role.in_(["warehouse", "operations", "admin"])
@@ -221,7 +287,7 @@ def get_staff_performance(
 @router.get("/sla-summary")
 def get_sla_summary(
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_roles("admin", "manager")),
 ):
     total_rts = db.query(func.count(models.Order.id)).filter(
         models.Order.rts_at.isnot(None)
@@ -245,7 +311,7 @@ def get_sla_summary(
 @router.get("/inventory-performance")
 def get_inventory_performance(
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_roles("admin", "manager")),
 ):
     """
     Returns inventory turnover rate and wastage/spoilage logs for the business owner.
@@ -331,7 +397,7 @@ def get_inventory_performance(
 def get_monthly_inventory(
     month: Optional[str] = Query(None, description="Format: YYYY-MM, e.g. 2026-08"),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_roles("admin", "manager")),
 ):
     """
     Monthly inventory & spoilage report for official owner records.
@@ -430,7 +496,7 @@ def get_monthly_inventory(
 def get_daily_working(
     date_str: Optional[str] = Query(None, description="Format YYYY-MM-DD"),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_roles("admin", "manager")),
 ):
     """
     Daily operations report — orders received, status breakdown, restocks & spoilage today.
@@ -505,8 +571,6 @@ def get_daily_working(
         "broken": broken_today,
     }
 
-
-from pydantic import BaseModel
 
 class EmailReportRequest(BaseModel):
     recipient_email: Optional[str] = None
@@ -590,7 +654,7 @@ def download_pdf_report(
     date_str: Optional[str] = Query(None, description="Format YYYY-MM-DD"),
     notes: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_roles("admin", "manager")),
 ):
     """
     Generates and returns an instant corporate PDF report as a direct file download.
@@ -617,6 +681,3 @@ def download_pdf_report(
             "Access-Control-Expose-Headers": "Content-Disposition"
         }
     )
-
-
-

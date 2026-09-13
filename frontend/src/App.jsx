@@ -24,7 +24,7 @@ import Tasks from "./pages/Tasks";
 import CustomerProfiles from "./pages/CustomerProfiles";
 import Accounts from "./pages/Accounts";
 import ActivityLog from "./pages/ActivityLog";
-import DataManagement from "./pages/DataManagement";
+import EmailAutomation from "./pages/EmailAutomation";
 
 function ProtectedLayout() {
   const [toasts, setToasts] = useState([]);
@@ -70,7 +70,7 @@ function ProtectedLayout() {
           <Route path="/users"          element={<RequireRole roles={["admin", "manager"]}><Users /></RequireRole>} />
           <Route path="/tasks"          element={<Tasks />} />
           <Route path="/activity"       element={<ActivityLog />} />
-          <Route path="/data"           element={<RequireRole roles={["admin", "manager"]}><DataManagement /></RequireRole>} />
+          <Route path="/email-settings" element={<RequireRole roles={["admin", "manager"]}><EmailAutomation /></RequireRole>} />
           <Route path="*"               element={<Navigate to="/" />} />
         </Routes>
       </main>
