@@ -899,21 +899,24 @@ def delete_order(
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
-    # Clear Foreign Key dependencies
-    db.query(models.StockMovement).filter(models.StockMovement.order_id == order_id).update({models.StockMovement.order_id: None}, synchronize_session=False)
-    db.query(models.LedgerEntry).filter(models.LedgerEntry.related_order_id == order_id).update({models.LedgerEntry.related_order_id: None}, synchronize_session=False)
-    db.query(models.AccountInvoice).filter(models.AccountInvoice.related_order_id == order_id).update({models.AccountInvoice.related_order_id: None}, synchronize_session=False)
-    db.query(models.CustomerAttachment).filter(models.CustomerAttachment.order_id == order_id).update({models.CustomerAttachment.order_id: None}, synchronize_session=False)
-    db.query(models.ChatMessage).filter(models.ChatMessage.order_id == order_id).update({models.ChatMessage.order_id: None}, synchronize_session=False)
-    db.query(models.NotificationLog).filter(models.NotificationLog.order_id == order_id).delete(synchronize_session=False)
-    db.query(models.NotificationLog).filter(models.NotificationLog.related_order_id == order_id).update({models.NotificationLog.related_order_id: None}, synchronize_session=False)
-    db.query(models.StatusHistory).filter(models.StatusHistory.order_id == order_id).delete(synchronize_session=False)
-    db.query(models.OrderItem).filter(models.OrderItem.order_id == order_id).delete(synchronize_session=False)
-
     order_num = order.order_number
     cust_name = order.customer_name
-    db.delete(order)
-    db.commit()
+    try:
+        # Clear nullable foreign-key dependencies before removing the order.
+        db.query(models.StockMovement).filter(models.StockMovement.order_id == order_id).update({models.StockMovement.order_id: None}, synchronize_session=False)
+        db.query(models.LedgerEntry).filter(models.LedgerEntry.related_order_id == order_id).update({models.LedgerEntry.related_order_id: None}, synchronize_session=False)
+        db.query(models.AccountInvoice).filter(models.AccountInvoice.related_order_id == order_id).update({models.AccountInvoice.related_order_id: None}, synchronize_session=False)
+        db.query(models.CustomerAttachment).filter(models.CustomerAttachment.order_id == order_id).update({models.CustomerAttachment.order_id: None}, synchronize_session=False)
+        db.query(models.ChatMessage).filter(models.ChatMessage.order_id == order_id).update({models.ChatMessage.order_id: None}, synchronize_session=False)
+        db.query(models.NotificationLog).filter(models.NotificationLog.order_id == order_id).delete(synchronize_session=False)
+        db.query(models.StatusHistory).filter(models.StatusHistory.order_id == order_id).delete(synchronize_session=False)
+        db.query(models.OrderItem).filter(models.OrderItem.order_id == order_id).delete(synchronize_session=False)
+        db.delete(order)
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Failed to delete order %s", order_id)
+        raise HTTPException(status_code=500, detail=f"Could not delete order: {type(exc).__name__}")
 
     try:
         from routers.audit_log import log_action

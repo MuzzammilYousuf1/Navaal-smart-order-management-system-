@@ -147,7 +147,7 @@ export default function Orders() {
       showStatus(`Order ${order.order_number} deleted.`, "success");
       fetchOrders();
     } catch (err) {
-      showStatus(`❌ ${err.response?.data?.detail || "Could not delete order"}`, "error");
+      showStatus(`❌ ${err.response?.data?.detail || err.response?.data?.message || "Could not delete order"}`, "error");
     }
   };
 
