@@ -52,24 +52,13 @@ def get_email_setting(db: Session, key: str, default: Optional[str] = None) -> O
 
 
 def get_email_recipients(db: Session, key: str):
-    """Use per-notification recipients when configured; otherwise use management defaults."""
+    """Use per-notification recipients when configured; otherwise default to Ukkasha's email."""
     configured = get_email_setting(db, f"email.{key}.recipients", "") or ""
     recipients = [email.strip() for email in configured.split(",") if email.strip()]
     if recipients:
         return recipients
-    if REPORT_RECIPIENT_EMAIL:
-        recipients.append(REPORT_RECIPIENT_EMAIL)
-    try:
-        for (email,) in db.query(models.User.email).filter(
-            models.User.is_active == True,
-            models.User.email.isnot(None),
-            models.User.role.in_(["admin", "manager"]),
-        ).all():
-            if email and email.strip() not in recipients:
-                recipients.append(email.strip())
-    except Exception as ex:
-        logger.warning("Could not query management email recipients: %s", ex)
-    return recipients or ["ukkashanavaal5@gmail.com"]
+    default_recipient = REPORT_RECIPIENT_EMAIL or "ukkashanavaal5@gmail.com"
+    return [default_recipient]
 REPORT_SEND_TIME = os.getenv("REPORT_SEND_TIME", "10:15")  # Default to 10:15 AM Pakistan time
 
 PAKISTAN_TZ = ZoneInfo("Asia/Karachi")
@@ -179,12 +168,23 @@ def generate_daily_report_pdf(db: Session, target_date: datetime, custom_notes: 
 
     day_start, day_end = _report_day_bounds(target_date)
     date_str = day_start.strftime("%A, %B %d, %Y")
+    period_bounds_str = f"{day_start.strftime('%Y-%m-%d 00:00:00')} to {day_start.strftime('%Y-%m-%d 23:59:59')} PKT"
 
-    # Queries
+    # All-Time Cumulative System Totals
+    all_time_orders_count = db.query(func.count(models.Order.id)).scalar() or 0
+    all_time_orders_amount = db.query(func.sum(models.Order.total_amount)).scalar() or 0.0
+    all_time_received_amount = db.query(func.sum(models.Order.amount_received)).scalar() or 0.0
+
+    # Period Specific Queries (Orders created within this report period)
     total_orders = db.query(func.count(models.Order.id)).filter(
         models.Order.created_at >= day_start,
         models.Order.created_at <= day_end
     ).scalar() or 0
+
+    orders_today_amount = db.query(func.sum(models.Order.total_amount)).filter(
+        models.Order.created_at >= day_start,
+        models.Order.created_at <= day_end
+    ).scalar() or 0.0
 
     delivered_orders = db.query(func.count(models.Order.id)).filter(
         models.Order.status == "delivered",
@@ -261,18 +261,35 @@ def generate_daily_report_pdf(db: Session, target_date: datetime, custom_notes: 
     # Meta Info Bar
     meta_data = [
         [
-            Paragraph(f"<b>Report Date:</b> {date_str}", meta_style),
+            Paragraph(f"<b>Report Window:</b> {period_bounds_str}", meta_style),
             Paragraph(f"<b>Generated At:</b> {datetime.now(PAKISTAN_TZ).strftime('%Y-%m-%d %H:%M PKT')}", meta_style),
-            Paragraph("<b>Classification:</b> Confidential Corporate Audit", meta_style),
+            Paragraph("<b>Classification:</b> Confidential Audit", meta_style),
         ]
     ]
-    t_meta = Table(meta_data, colWidths=[180, 180, 175])
+    t_meta = Table(meta_data, colWidths=[230, 155, 150])
     t_meta.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#f0fdf4')),
         ('PADDING', (0,0), (-1,-1), 5),
         ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#bbf7d0')),
     ]))
     elements.append(t_meta)
+    elements.append(Spacer(1, 8))
+
+    # System-Wide Cumulative Overview Bar
+    system_cum_data = [
+        [
+            Paragraph(f"<b>System All-Time Orders:</b> {all_time_orders_count}", meta_style),
+            Paragraph(f"<b>System Total Amount:</b> PKR {all_time_orders_amount:,.0f}", meta_style),
+            Paragraph(f"<b>System Total Collected:</b> PKR {all_time_received_amount:,.0f}", meta_style),
+        ]
+    ]
+    t_sys_cum = Table(system_cum_data, colWidths=[180, 180, 175])
+    t_sys_cum.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#f8fafc')),
+        ('PADDING', (0,0), (-1,-1), 5),
+        ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
+    ]))
+    elements.append(t_sys_cum)
     elements.append(Spacer(1, 8))
 
     # Management Remarks (Custom Notes)
@@ -290,12 +307,12 @@ def generate_daily_report_pdf(db: Session, target_date: datetime, custom_notes: 
     # KPI Summary Cards Table
     kpi_data = [
         [
-            Paragraph("<b>Total Orders Created</b>", meta_style), Paragraph(str(total_orders), table_cell_bold),
-            Paragraph("<b>Delivered Orders</b>", meta_style), Paragraph(str(delivered_orders), table_cell_bold)
+            Paragraph("<b>Orders Placed Today</b>", meta_style), Paragraph(str(total_orders), table_cell_bold),
+            Paragraph("<b>Today's Total Order Value</b>", meta_style), Paragraph(f"PKR {orders_today_amount:,.2f}", table_cell_bold)
         ],
         [
-            Paragraph("<b>Total Delivered Revenue</b>", meta_style), Paragraph(f"PKR {revenue_today:,.2f}", table_cell_bold),
-            Paragraph("<b>Total Amount Received</b>", meta_style), Paragraph(f"PKR {received_today:,.2f}", table_cell_bold)
+            Paragraph("<b>Delivered Revenue Today</b>", meta_style), Paragraph(f"PKR {revenue_today:,.2f}", table_cell_bold),
+            Paragraph("<b>Payments Received Today</b>", meta_style), Paragraph(f"PKR {received_today:,.2f}", table_cell_bold)
         ],
         [
             Paragraph("<b>Restock Operations</b>", meta_style), Paragraph(str(restocks_count), table_cell_bold),
@@ -414,12 +431,23 @@ def generate_daily_report_html(db: Session, target_date: datetime) -> str:
     """
     day_start, day_end = _report_day_bounds(target_date)
     date_str = day_start.strftime("%A, %B %d, %Y")
+    period_bounds_str = f"{day_start.strftime('%Y-%m-%d 00:00:00')} to {day_start.strftime('%Y-%m-%d 23:59:59')} PKT"
 
-    # 1. KPI Queries
+    # All-Time System Cumulative Totals
+    all_time_orders_count = db.query(func.count(models.Order.id)).scalar() or 0
+    all_time_orders_amount = db.query(func.sum(models.Order.total_amount)).scalar() or 0.0
+    all_time_received_amount = db.query(func.sum(models.Order.amount_received)).scalar() or 0.0
+
+    # 1. KPI Queries (Selected Daily Report Window)
     total_orders = db.query(func.count(models.Order.id)).filter(
         models.Order.created_at >= day_start,
         models.Order.created_at <= day_end
     ).scalar() or 0
+
+    orders_today_amount = db.query(func.sum(models.Order.total_amount)).filter(
+        models.Order.created_at >= day_start,
+        models.Order.created_at <= day_end
+    ).scalar() or 0.0
 
     delivered_orders = db.query(func.count(models.Order.id)).filter(
         models.Order.status == "delivered",
@@ -471,7 +499,7 @@ def generate_daily_report_html(db: Session, target_date: datetime) -> str:
         ).scalar() or 0
         status_counts.append((s, cnt))
 
-    # 4. Source Breakdown
+    # 4. Source Breakdown (All Channels)
     sources = db.query(
         models.Order.source,
         func.count(models.Order.id).label("count"),
@@ -512,7 +540,6 @@ def generate_daily_report_html(db: Session, target_date: datetime) -> str:
     ).all()
 
     # --- HTML Building ---
-    # Colors: Emerald Brand Theme (#1b4332, #2d6a4f, #52b788)
     html = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -527,40 +554,52 @@ def generate_daily_report_html(db: Session, target_date: datetime) -> str:
             <td style="background: linear-gradient(135deg, #1b4332 0%, #2d6a4f 100%); padding: 30px 40px; text-align: left; border-bottom: 4px solid #52b788;">
                 <h1 style="margin: 0; color: #ffffff; font-size: 26px; font-weight: 800; letter-spacing: 0.5px; text-transform: uppercase;">Navaal Organic Foods</h1>
                 <p style="margin: 5px 0 0 0; color: #a3e635; font-size: 14px; font-weight: 600; letter-spacing: 0.5px;">SMART ORDERFLOW • DAILY REPORT</p>
-                <p style="margin: 15px 0 0 0; color: #ffffff; opacity: 0.85; font-size: 13px;">Date: {date_str} (Pakistan time)</p>
+                <p style="margin: 15px 0 0 0; color: #ffffff; opacity: 0.9 font-size: 13px;"><b>Report Window:</b> {period_bounds_str}</p>
             </td>
         </tr>
 
         <!-- Main Content -->
         <tr>
             <td style="padding: 30px 40px;">
-                <!-- Key Metrics Grid -->
-                <h3 style="margin-top: 0; margin-bottom: 15px; color: #1b4332; font-size: 16px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">Key Performance Indicators</h3>
+                <!-- All-Time System Cumulative Overview -->
+                <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 18px; margin-bottom: 25px;">
+                    <div style="font-size: 11px; font-weight: bold; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">System-Wide All-Time Summary</div>
+                    <table width="100%" border="0" cellpadding="0" cellspacing="0" style="font-size: 13px;">
+                        <tr>
+                            <td width="33%"><b>All-Time Orders:</b> <span style="color: #0f172a; font-weight: 800;">{all_time_orders_count}</span></td>
+                            <td width="33%"><b>All-Time Total Amount:</b> <span style="color: #047857; font-weight: 800;">PKR {all_time_orders_amount:,.0f}</span></td>
+                            <td width="34%"><b>Total Payments Collected:</b> <span style="color: #b45309; font-weight: 800;">PKR {all_time_received_amount:,.0f}</span></td>
+                        </tr>
+                    </table>
+                </div>
+
+                <!-- Daily Operating Metrics Grid -->
+                <h3 style="margin-top: 0; margin-bottom: 15px; color: #1b4332; font-size: 16px; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">Daily Operating KPIs ({date_str})</h3>
                 <table border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom: 25px;">
                     <tr>
-                        <td width="24%" style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 15px; text-align: center;">
-                            <div style="font-size: 12px; color: #166534; text-transform: uppercase; font-weight: bold; margin-bottom: 5px;">Orders Today</div>
-                            <div style="font-size: 22px; font-weight: 800; color: #14532d;">{total_orders}</div>
+                        <td width="19%" style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 12px 10px; text-align: center;">
+                            <div style="font-size: 10px; color: #166534; text-transform: uppercase; font-weight: bold; margin-bottom: 3px;">Orders Today</div>
+                            <div style="font-size: 20px; font-weight: 800; color: #14532d;">{total_orders}</div>
                         </td>
                         <td width="1%"></td>
-                        <td width="24%" style="background-color: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px; padding: 15px; text-align: center;">
-                            <div style="font-size: 12px; color: #065f46; text-transform: uppercase; font-weight: bold; margin-bottom: 5px;">Delivered Amount</div>
-                            <div style="font-size: 22px; font-weight: 800; color: #064e3b;">PKR {revenue_today:,.0f}</div>
+                        <td width="20%" style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 12px 10px; text-align: center;">
+                            <div style="font-size: 10px; color: #166534; text-transform: uppercase; font-weight: bold; margin-bottom: 3px;">Today's Order Value</div>
+                            <div style="font-size: 16px; font-weight: 800; color: #14532d;">PKR {orders_today_amount:,.0f}</div>
                         </td>
                         <td width="1%"></td>
-                        <td width="24%" style="background-color: #fefce8; border: 1px solid #fde68a; border-radius: 8px; padding: 15px; text-align: center;">
-                            <div style="font-size: 12px; color: #854d0e; text-transform: uppercase; font-weight: bold; margin-bottom: 5px;">Amount Received</div>
-                            <div style="font-size: 22px; font-weight: 800; color: #713f12;">PKR {received_today:,.0f}</div>
+                        <td width="20%" style="background-color: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px; padding: 12px 10px; text-align: center;">
+                            <div style="font-size: 10px; color: #065f46; text-transform: uppercase; font-weight: bold; margin-bottom: 3px;">Delivered Amount</div>
+                            <div style="font-size: 16px; font-weight: 800; color: #064e3b;">PKR {revenue_today:,.0f}</div>
                         </td>
                         <td width="1%"></td>
-                        <td width="24%" style="background-color: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 15px; text-align: center;">
-                            <div style="font-size: 12px; color: #1e40af; text-transform: uppercase; font-weight: bold; margin-bottom: 5px;">Delivered</div>
-                            <div style="font-size: 22px; font-weight: 800; color: #1e3a8a;">{delivered_orders}</div>
+                        <td width="19%" style="background-color: #fefce8; border: 1px solid #fde68a; border-radius: 8px; padding: 12px 10px; text-align: center;">
+                            <div style="font-size: 10px; color: #854d0e; text-transform: uppercase; font-weight: bold; margin-bottom: 3px;">Amount Received</div>
+                            <div style="font-size: 16px; font-weight: 800; color: #713f12;">PKR {received_today:,.0f}</div>
                         </td>
                         <td width="1%"></td>
-                        <td width="24%" style="background-color: #fff1f2; border: 1px solid #fecdd3; border-radius: 8px; padding: 15px; text-align: center;">
-                            <div style="font-size: 12px; color: #9f1239; text-transform: uppercase; font-weight: bold; margin-bottom: 5px;">SLA Breach Rate</div>
-                            <div style="font-size: 22px; font-weight: 800; color: #881337;">{sla_breach_rate}%</div>
+                        <td width="18%" style="background-color: #fff1f2; border: 1px solid #fecdd3; border-radius: 8px; padding: 12px 10px; text-align: center;">
+                            <div style="font-size: 10px; color: #9f1239; text-transform: uppercase; font-weight: bold; margin-bottom: 3px;">SLA Breach</div>
+                            <div style="font-size: 18px; font-weight: 800; color: #881337;">{sla_breach_rate}%</div>
                         </td>
                     </tr>
                 </table>
