@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import api from "../api/client";
 import useAuth from "../store/useAuth";
+import { serverDate } from "../utils/dates";
 
 // ── Action metadata (icon + colour) ──────────────────────────────────────────
 const ACTION_META = {
@@ -49,7 +50,7 @@ function ResourceIcon({ type }) {
 
 function timeAgo(dateStr) {
   if (!dateStr) return "";
-  const diff = Date.now() - new Date(dateStr).getTime();
+  const diff = Date.now() - serverDate(dateStr).getTime();
   const secs = Math.floor(diff / 1000);
   if (secs < 60) return `${secs}s ago`;
   const mins = Math.floor(secs / 60);
@@ -61,7 +62,7 @@ function timeAgo(dateStr) {
 
 function formatTimestamp(dateStr) {
   if (!dateStr) return "";
-  return new Date(dateStr).toLocaleString("en-GB", {
+  return serverDate(dateStr).toLocaleString("en-GB", {
     day: "2-digit", month: "short", year: "numeric",
     hour: "2-digit", minute: "2-digit", second: "2-digit"
   });
@@ -133,6 +134,9 @@ export default function ActivityLog() {
           </h1>
           <p className="text-brand-500 text-sm mt-0.5">
             Complete accountability trail — every action by every user
+          </p>
+          <p className="text-amber-400/80 text-xs mt-1">
+            Activity records are retained for 31 days and then automatically removed to control server storage.
           </p>
         </div>
         <button onClick={fetchLog} className="btn-secondary text-xs">

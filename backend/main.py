@@ -20,7 +20,7 @@ from jose import jwt
 from auth import SECRET_KEY, ALGORITHM
 import models
 from sla_engine import run_sla_check, set_ws_manager
-from routers import auth, orders, dashboard, reports, notifications, users, tracking, inventory, invoices, customers, subscriptions, tasks, chat, webhook_n8n, ledger, accounts, audit_log
+from routers import auth, orders, order_io, dashboard, reports, notifications, users, tracking, inventory, invoices, customers, subscriptions, tasks, chat, webhook_n8n, ledger, accounts, audit_log
 
 
 logging.basicConfig(level=logging.INFO)
@@ -104,6 +104,8 @@ async def lifespan(app: FastAPI):
                 connection.exec_driver_sql("ALTER TABLE products ADD COLUMN base_product_id INTEGER")
             if "unit_multiplier" not in prod_columns:
                 connection.exec_driver_sql("ALTER TABLE products ADD COLUMN unit_multiplier FLOAT DEFAULT 1.0")
+            if "pricing_type" not in prod_columns:
+                connection.exec_driver_sql("ALTER TABLE products ADD COLUMN pricing_type VARCHAR DEFAULT 'fixed'")
             if "is_customer_facing" not in prod_columns:
                 connection.exec_driver_sql(f"ALTER TABLE products ADD COLUMN is_customer_facing BOOLEAN DEFAULT {bool_false}")
                 # Seed defaults
@@ -138,6 +140,8 @@ async def lifespan(app: FastAPI):
             oi_columns = {col["name"] for col in inspector.get_columns("order_items")}
             if "product_id" not in oi_columns:
                 connection.exec_driver_sql("ALTER TABLE order_items ADD COLUMN product_id INTEGER")
+            if "weight_kg" not in oi_columns:
+                connection.exec_driver_sql("ALTER TABLE order_items ADD COLUMN weight_kg FLOAT")
 
         # 5. Migrate customers table
         if inspector.has_table("customers"):
@@ -191,6 +195,10 @@ async def lifespan(app: FastAPI):
 
     # Start background SLA scheduler (every 60 seconds)
     scheduler.add_job(run_sla_check, "interval", seconds=60, id="sla_check")
+
+    # Keep the activity log bounded: entries older than 31 days are removed daily.
+    from routers.audit_log import purge_old_audit_logs
+    scheduler.add_job(purge_old_audit_logs, "interval", days=1, id="audit_retention", replace_existing=True)
     
     # Start background Email Report scheduler (daily at configured time)
     try:
@@ -314,6 +322,7 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(orders.router)
+app.include_router(order_io.router)
 app.include_router(dashboard.router)
 app.include_router(reports.router)
 app.include_router(notifications.router)

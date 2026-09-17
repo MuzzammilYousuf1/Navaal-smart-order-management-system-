@@ -53,6 +53,7 @@ class OrderItemIn(BaseModel):
     product_id: Optional[int] = None
     quantity: int = 1
     unit_price: float = 0.0
+    weight_kg: Optional[float] = None
 
 
 class OrderItemOut(BaseModel):
@@ -60,6 +61,7 @@ class OrderItemOut(BaseModel):
     product_id: Optional[int] = None
     product_name: str
     quantity: int
+    weight_kg: Optional[float] = None
     unit_price: float
     total_price: float
 
@@ -206,6 +208,7 @@ class ProductCreate(BaseModel):
     sku: str
     category: Optional[str] = "General"
     unit: Optional[str] = "unit"
+    pricing_type: str = "fixed"
     unit_price: float = 0.0
     stock_qty: float = 0.0
     low_stock_threshold: float = 10.0
@@ -218,6 +221,7 @@ class ProductUpdate(BaseModel):
     name: Optional[str] = None
     category: Optional[str] = None
     unit: Optional[str] = None
+    pricing_type: Optional[str] = None
     unit_price: Optional[float] = None
     low_stock_threshold: Optional[float] = None
     is_active: Optional[bool] = None
@@ -246,6 +250,7 @@ class ProductOut(BaseModel):
     sku: str
     category: Optional[str]
     unit: str
+    pricing_type: str = "fixed"
     unit_price: float
     stock_qty: float
     low_stock_threshold: float

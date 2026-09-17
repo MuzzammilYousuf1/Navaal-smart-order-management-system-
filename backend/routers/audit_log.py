@@ -8,11 +8,26 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from database import get_db
+from database import get_db, SessionLocal
 import models
 from auth import get_current_user
 
 router = APIRouter(prefix="/api/audit", tags=["audit"])
+
+
+def purge_old_audit_logs(retention_days: int = 31) -> int:
+    """Delete audit entries older than the one-month retention period."""
+    db = SessionLocal()
+    try:
+        cutoff = datetime.utcnow() - timedelta(days=retention_days)
+        deleted = db.query(models.AuditLog).filter(models.AuditLog.created_at < cutoff).delete(synchronize_session=False)
+        db.commit()
+        return deleted
+    except Exception:
+        db.rollback()
+        return 0
+    finally:
+        db.close()
 
 
 # ─── Helper — call this from anywhere to record an action ─────────────────────

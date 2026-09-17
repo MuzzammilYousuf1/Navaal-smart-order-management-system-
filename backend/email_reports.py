@@ -5,7 +5,8 @@ import io
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from typing import Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import func, case
@@ -32,7 +33,7 @@ SMTP_FROM_EMAIL = os.getenv("SMTP_FROM_EMAIL", "").strip()
 REPORT_RECIPIENT_EMAIL = os.getenv("REPORT_RECIPIENT_EMAIL", "").strip()
 
 EMAIL_AUTOMATIONS = {
-    "daily_report": {"label": "Nightly operations report", "trigger": "Scheduled daily", "default_time": "23:50", "default_enabled": True},
+    "daily_report": {"label": "Daily 10:15 AM operations report", "trigger": "Scheduled daily at 10:15 AM Pakistan time", "default_time": "10:15", "default_enabled": True},
     "low_stock": {"label": "Low-stock / backorder alert", "trigger": "Immediately when stock is insufficient", "default_time": None, "default_enabled": True},
     "restock": {"label": "Inventory received alert", "trigger": "Immediately after restocking", "default_time": None, "default_enabled": True},
     "sla_alerts": {"label": "SLA delay and escalation alert", "trigger": "Immediately at 45/60/75/90 minute delays", "default_time": None, "default_enabled": False},
@@ -48,7 +49,47 @@ def is_email_automation_enabled(db: Session, key: str) -> bool:
 def get_email_setting(db: Session, key: str, default: Optional[str] = None) -> Optional[str]:
     row = db.query(models.Settings).filter(models.Settings.key == key).first()
     return row.value if row and row.value is not None else default
-REPORT_SEND_TIME = os.getenv("REPORT_SEND_TIME", "23:50")  # Default to 11:50 PM daily
+
+
+def get_email_recipients(db: Session, key: str):
+    """Use per-notification recipients when configured; otherwise use management defaults."""
+    configured = get_email_setting(db, f"email.{key}.recipients", "") or ""
+    recipients = [email.strip() for email in configured.split(",") if email.strip()]
+    if recipients:
+        return recipients
+    if REPORT_RECIPIENT_EMAIL:
+        recipients.append(REPORT_RECIPIENT_EMAIL)
+    try:
+        for (email,) in db.query(models.User.email).filter(
+            models.User.is_active == True,
+            models.User.email.isnot(None),
+            models.User.role.in_(["admin", "manager"]),
+        ).all():
+            if email and email.strip() not in recipients:
+                recipients.append(email.strip())
+    except Exception as ex:
+        logger.warning("Could not query management email recipients: %s", ex)
+    return recipients or ["ukkashanavaal5@gmail.com"]
+REPORT_SEND_TIME = os.getenv("REPORT_SEND_TIME", "10:15")  # Default to 10:15 AM Pakistan time
+
+PAKISTAN_TZ = ZoneInfo("Asia/Karachi")
+
+
+def _report_day_bounds(target_date: datetime):
+    """Return the selected Pakistan calendar day as naive UTC DB boundaries."""
+    local_day = target_date.replace(tzinfo=PAKISTAN_TZ) if target_date.tzinfo is None else target_date.astimezone(PAKISTAN_TZ)
+    start_local = local_day.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_local = start_local + timedelta(days=1)
+    return (
+        start_local.astimezone(timezone.utc).replace(tzinfo=None),
+        end_local.astimezone(timezone.utc).replace(tzinfo=None) - timedelta(microseconds=1),
+    )
+
+
+def _pakistan_time(value: Optional[datetime]) -> str:
+    if not value:
+        return "—"
+    return value.replace(tzinfo=timezone.utc).astimezone(PAKISTAN_TZ).strftime("%H:%M")
 
 
 
@@ -136,8 +177,7 @@ def generate_daily_report_pdf(db: Session, target_date: datetime, custom_notes: 
         textColor=colors.HexColor('#0f172a')
     )
 
-    day_start = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
-    day_end = target_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+    day_start, day_end = _report_day_bounds(target_date)
     date_str = day_start.strftime("%A, %B %d, %Y")
 
     # Queries
@@ -153,6 +193,12 @@ def generate_daily_report_pdf(db: Session, target_date: datetime, custom_notes: 
     ).scalar() or 0
 
     revenue_today = db.query(func.sum(models.Order.total_amount)).filter(
+        models.Order.status == "delivered",
+        models.Order.delivered_at >= day_start,
+        models.Order.delivered_at <= day_end
+    ).scalar() or 0.0
+
+    received_today = db.query(func.sum(models.Order.amount_received)).filter(
         models.Order.status == "delivered",
         models.Order.delivered_at >= day_start,
         models.Order.delivered_at <= day_end
@@ -191,6 +237,20 @@ def generate_daily_report_pdf(db: Session, target_date: datetime, custom_notes: 
         models.Order.created_at <= day_end
     ).order_by(models.Order.created_at.desc()).all()
 
+    rider_stats = db.query(
+        models.Order.assigned_rider_name,
+        func.count(models.Order.id).label("total"),
+        func.sum(case((models.Order.status == "delivered", 1), else_=0)).label("delivered"),
+        func.sum(case((models.Order.status == "returned", 1), else_=0)).label("returned"),
+        func.sum(case((models.Order.status == "delivered", models.Order.total_amount), else_=0.0)).label("order_amount"),
+        func.sum(case((models.Order.status == "delivered", models.Order.amount_received), else_=0.0)).label("received"),
+    ).filter(
+        models.Order.assigned_rider_name.isnot(None),
+        models.Order.assigned_rider_name != "",
+        models.Order.created_at >= day_start,
+        models.Order.created_at <= day_end,
+    ).group_by(models.Order.assigned_rider_name).all()
+
     elements = []
 
     # Header
@@ -202,7 +262,7 @@ def generate_daily_report_pdf(db: Session, target_date: datetime, custom_notes: 
     meta_data = [
         [
             Paragraph(f"<b>Report Date:</b> {date_str}", meta_style),
-            Paragraph(f"<b>Generated At:</b> {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}", meta_style),
+            Paragraph(f"<b>Generated At:</b> {datetime.now(PAKISTAN_TZ).strftime('%Y-%m-%d %H:%M PKT')}", meta_style),
             Paragraph("<b>Classification:</b> Confidential Corporate Audit", meta_style),
         ]
     ]
@@ -235,7 +295,7 @@ def generate_daily_report_pdf(db: Session, target_date: datetime, custom_notes: 
         ],
         [
             Paragraph("<b>Total Delivered Revenue</b>", meta_style), Paragraph(f"PKR {revenue_today:,.2f}", table_cell_bold),
-            Paragraph("<b>SLA Compliance Rate</b>", meta_style), Paragraph(f"{sla_compliance_rate}%", table_cell_bold)
+            Paragraph("<b>Total Amount Received</b>", meta_style), Paragraph(f"PKR {received_today:,.2f}", table_cell_bold)
         ],
         [
             Paragraph("<b>Restock Operations</b>", meta_style), Paragraph(str(restocks_count), table_cell_bold),
@@ -275,8 +335,39 @@ def generate_daily_report_pdf(db: Session, target_date: datetime, custom_notes: 
     elements.append(t_status)
     elements.append(Spacer(1, 10))
 
+    # Rider performance summary
+    elements.append(Paragraph("2. Rider Delivery & Collection Summary", section_heading))
+    rider_rows = [[
+        Paragraph("<b>Rider</b>", table_header_style),
+        Paragraph("<b>Orders</b>", table_header_style),
+        Paragraph("<b>Delivered</b>", table_header_style),
+        Paragraph("<b>Returned</b>", table_header_style),
+        Paragraph("<b>Order Amount</b>", table_header_style),
+        Paragraph("<b>Received</b>", table_header_style),
+    ]]
+    for r in rider_stats:
+        rider_rows.append([
+            Paragraph(r.assigned_rider_name or "Unassigned", table_cell_bold),
+            Paragraph(str(r.total or 0), table_cell_style),
+            Paragraph(str(r.delivered or 0), table_cell_style),
+            Paragraph(str(r.returned or 0), table_cell_style),
+            Paragraph(f"PKR {(r.order_amount or 0):,.0f}", table_cell_style),
+            Paragraph(f"PKR {(r.received or 0):,.0f}", table_cell_style),
+        ])
+    if len(rider_rows) == 1:
+        rider_rows.append([Paragraph("No rider activity recorded.", table_cell_style), "", "", "", "", ""])
+    t_riders = Table(rider_rows, colWidths=[125, 55, 65, 55, 115, 120])
+    t_riders.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#047857')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#cbd5e1')),
+        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f8fafc')]),
+        ('PADDING', (0,0), (-1,-1), 4),
+    ]))
+    elements.append(t_riders)
+    elements.append(Spacer(1, 10))
+
     # Detailed Orders Log Table
-    elements.append(Paragraph("2. Detailed Order Log for Today", section_heading))
+    elements.append(Paragraph("3. Detailed Order Log for Today", section_heading))
     if not orders:
         elements.append(Paragraph("<i>No orders recorded on this date.</i>", meta_style))
     else:
@@ -321,8 +412,7 @@ def generate_daily_report_html(db: Session, target_date: datetime) -> str:
     Generates a beautifully styled, high-impact HTML report containing
     operational, SLA, inventory, rider, and sales metrics.
     """
-    day_start = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
-    day_end = target_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+    day_start, day_end = _report_day_bounds(target_date)
     date_str = day_start.strftime("%A, %B %d, %Y")
 
     # 1. KPI Queries
@@ -338,6 +428,12 @@ def generate_daily_report_html(db: Session, target_date: datetime) -> str:
     ).scalar() or 0
 
     revenue_today = db.query(func.sum(models.Order.total_amount)).filter(
+        models.Order.status == "delivered",
+        models.Order.delivered_at >= day_start,
+        models.Order.delivered_at <= day_end
+    ).scalar() or 0.0
+
+    received_today = db.query(func.sum(models.Order.amount_received)).filter(
         models.Order.status == "delivered",
         models.Order.delivered_at >= day_start,
         models.Order.delivered_at <= day_end
@@ -391,7 +487,9 @@ def generate_daily_report_html(db: Session, target_date: datetime) -> str:
         func.count(models.Order.id).label("total"),
         func.sum(case((models.Order.status == "delivered", 1), else_=0)).label("delivered"),
         func.sum(case((models.Order.status == "out_for_delivery", 1), else_=0)).label("out_for_delivery"),
-        func.sum(case((models.Order.status == "delivered", models.Order.total_amount), else_=0.0)).label("cash_collected")
+        func.sum(case((models.Order.status == "delivered", models.Order.total_amount), else_=0.0)).label("delivered_amount"),
+        func.sum(case((models.Order.status == "delivered", models.Order.amount_received), else_=0.0)).label("amount_received"),
+        func.sum(case((models.Order.status == "returned", 1), else_=0)).label("returned")
     ).filter(
         models.Order.assigned_rider_name.isnot(None),
         models.Order.assigned_rider_name != "",
@@ -429,7 +527,7 @@ def generate_daily_report_html(db: Session, target_date: datetime) -> str:
             <td style="background: linear-gradient(135deg, #1b4332 0%, #2d6a4f 100%); padding: 30px 40px; text-align: left; border-bottom: 4px solid #52b788;">
                 <h1 style="margin: 0; color: #ffffff; font-size: 26px; font-weight: 800; letter-spacing: 0.5px; text-transform: uppercase;">Navaal Organic Foods</h1>
                 <p style="margin: 5px 0 0 0; color: #a3e635; font-size: 14px; font-weight: 600; letter-spacing: 0.5px;">SMART ORDERFLOW • DAILY REPORT</p>
-                <p style="margin: 15px 0 0 0; color: #ffffff; opacity: 0.85; font-size: 13px;">Date: {date_str} (UTC)</p>
+                <p style="margin: 15px 0 0 0; color: #ffffff; opacity: 0.85; font-size: 13px;">Date: {date_str} (Pakistan time)</p>
             </td>
         </tr>
 
@@ -446,8 +544,13 @@ def generate_daily_report_html(db: Session, target_date: datetime) -> str:
                         </td>
                         <td width="1%"></td>
                         <td width="24%" style="background-color: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px; padding: 15px; text-align: center;">
-                            <div style="font-size: 12px; color: #065f46; text-transform: uppercase; font-weight: bold; margin-bottom: 5px;">Revenue (Deliv)</div>
+                            <div style="font-size: 12px; color: #065f46; text-transform: uppercase; font-weight: bold; margin-bottom: 5px;">Delivered Amount</div>
                             <div style="font-size: 22px; font-weight: 800; color: #064e3b;">PKR {revenue_today:,.0f}</div>
+                        </td>
+                        <td width="1%"></td>
+                        <td width="24%" style="background-color: #fefce8; border: 1px solid #fde68a; border-radius: 8px; padding: 15px; text-align: center;">
+                            <div style="font-size: 12px; color: #854d0e; text-transform: uppercase; font-weight: bold; margin-bottom: 5px;">Amount Received</div>
+                            <div style="font-size: 22px; font-weight: 800; color: #713f12;">PKR {received_today:,.0f}</div>
                         </td>
                         <td width="1%"></td>
                         <td width="24%" style="background-color: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 15px; text-align: center;">
@@ -540,7 +643,9 @@ def generate_daily_report_html(db: Session, target_date: datetime) -> str:
                         <th style="padding: 10px; text-align: center;">Assigned</th>
                         <th style="padding: 10px; text-align: center;">Out for Delivery</th>
                         <th style="padding: 10px; text-align: center;">Delivered</th>
-                        <th style="padding: 10px; text-align: right;">COD Cash Collected</th>
+        <th style="padding: 10px; text-align: center;">Returned</th>
+        <th style="padding: 10px; text-align: right;">Order Amount</th>
+        <th style="padding: 10px; text-align: right;">Amount Received</th>
                         <th style="padding: 10px; text-align: right;">Success %</th>
                     </tr>
     """
@@ -556,7 +661,9 @@ def generate_daily_report_html(db: Session, target_date: datetime) -> str:
                         <td style="padding: 10px; text-align: center; color: #475569;">{r.total}</td>
                         <td style="padding: 10px; text-align: center; color: #d97706; font-weight: 600;">{r.out_for_delivery}</td>
                         <td style="padding: 10px; text-align: center; color: #16a34a; font-weight: bold;">{r.delivered}</td>
-                        <td style="padding: 10px; text-align: right; font-weight: 800; color: #15803d;">PKR {r.cash_collected:,.0f}</td>
+        <td style="padding: 10px; text-align: center; color: #dc2626; font-weight: 600;">{r.returned or 0}</td>
+        <td style="padding: 10px; text-align: right; font-weight: 800; color: #15803d;">PKR {r.delivered_amount or 0:,.0f}</td>
+        <td style="padding: 10px; text-align: right; font-weight: 800; color: #15803d;">PKR {r.amount_received or 0:,.0f}</td>
                         <td style="padding: 10px; text-align: right; font-weight: bold; color: {success_color};">{success_pct}%</td>
                     </tr>
         """
@@ -564,7 +671,7 @@ def generate_daily_report_html(db: Session, target_date: datetime) -> str:
     if not rider_stats:
         html += """
                     <tr>
-                        <td colspan="6" style="padding: 20px; text-align: center; color: #94a3b8; font-style: italic;">No rider activities recorded for today.</td>
+                        <td colspan="8" style="padding: 20px; text-align: center; color: #94a3b8; font-style: italic;">No rider activities recorded for today.</td>
                     </tr>
         """
 
@@ -664,7 +771,7 @@ def generate_daily_report_html(db: Session, target_date: datetime) -> str:
     """
 
     for o in orders:
-        time_str = o.created_at.strftime("%H:%M")
+        time_str = _pakistan_time(o.created_at)
         status_label = o.status.replace("_", " ").upper()
         # Small color mappings
         color_map = {
@@ -734,24 +841,7 @@ def send_daily_report_email(
     if custom_recipient and custom_recipient.strip():
         recipients = [r.strip() for r in custom_recipient.split(",") if r.strip()]
     else:
-        if REPORT_RECIPIENT_EMAIL and REPORT_RECIPIENT_EMAIL.strip():
-            recipients.append(REPORT_RECIPIENT_EMAIL.strip())
-        
-        # Query active system user emails (admins/managers)
-        try:
-            user_emails = db.query(models.User.email).filter(
-                models.User.is_active == True,
-                models.User.email.isnot(None),
-                models.User.role.in_(["admin", "manager"])
-            ).all()
-            for u in user_emails:
-                if u.email and u.email.strip() and u.email.strip() not in recipients:
-                    recipients.append(u.email.strip())
-        except Exception as ex:
-            logger.warning(f"Could not query active user emails: {ex}")
-
-    if not recipients:
-        recipients = ["ukkashanavaal5@gmail.com"]
+        recipients = get_email_recipients(db, "daily_report")
 
     if not SMTP_HOST or not SMTP_PORT or not SMTP_USERNAME or not SMTP_PASSWORD or not SMTP_FROM_EMAIL:
         logger.warning(
@@ -760,14 +850,28 @@ def send_daily_report_email(
         )
         return False
 
+    # 23:50 was the old default. Move that legacy value to the requested
+    # morning schedule unless the owner has already selected another time.
+    if time_str == "23:50" and not os.getenv("REPORT_SEND_TIME"):
+        time_str = "10:15"
+        db = SessionLocal()
+        try:
+            row = db.query(models.Settings).filter(models.Settings.key == "email.daily_report.time").first()
+            if row:
+                row.value = "10:15"
+                row.updated_at = datetime.utcnow()
+                db.commit()
+        finally:
+            db.close()
+
     try:
         if date_str:
             target_date = datetime.strptime(date_str, "%Y-%m-%d")
         else:
-            target_date = datetime.utcnow()
+            target_date = datetime.now(PAKISTAN_TZ)
     except Exception as e:
         logger.error(f"Failed to parse report date '{date_str}': {e}. Defaulting to UTC now.")
-        target_date = datetime.utcnow()
+        target_date = datetime.now(PAKISTAN_TZ)
 
     date_label = target_date.strftime("%Y-%m-%d")
     recipients_str = ", ".join(recipients)
@@ -828,21 +932,7 @@ def send_low_stock_email_alert(db: Session, product_name: str, available_qty: fl
     """
     if not is_email_automation_enabled(db, "low_stock"):
         return False
-    recipients = [REPORT_RECIPIENT_EMAIL] if REPORT_RECIPIENT_EMAIL else []
-    try:
-        user_emails = db.query(models.User.email).filter(
-            models.User.is_active == True,
-            models.User.email.isnot(None),
-            models.User.role.in_(["admin", "manager"])
-        ).all()
-        for u in user_emails:
-            if u.email and u.email.strip() and u.email.strip() not in recipients:
-                recipients.append(u.email.strip())
-    except Exception:
-        pass
-
-    if not recipients:
-        recipients = ["ukkashanavaal5@gmail.com"]
+    recipients = get_email_recipients(db, "low_stock")
 
     if not SMTP_HOST or not SMTP_PORT or not SMTP_USERNAME or not SMTP_PASSWORD or not SMTP_FROM_EMAIL:
         return False
@@ -877,16 +967,8 @@ def send_restock_email_alert(db: Session, product_name: str, added_qty: float, n
     """Notify the owner/management when inventory is received, not only when it is low."""
     if not is_email_automation_enabled(db, "restock"):
         return False
-    recipients = [REPORT_RECIPIENT_EMAIL] if REPORT_RECIPIENT_EMAIL else []
-    try:
-        for (email,) in db.query(models.User.email).filter(
-            models.User.is_active == True, models.User.email.isnot(None), models.User.role.in_(["admin", "manager"])
-        ).all():
-            if email and email.strip() and email.strip() not in recipients:
-                recipients.append(email.strip())
-    except Exception:
-        pass
-    if not recipients or not SMTP_HOST or not SMTP_PORT or not SMTP_USERNAME or not SMTP_PASSWORD or not SMTP_FROM_EMAIL:
+    recipients = get_email_recipients(db, "restock")
+    if not SMTP_HOST or not SMTP_PORT or not SMTP_USERNAME or not SMTP_PASSWORD or not SMTP_FROM_EMAIL:
         return False
     msg = MIMEMultipart("alternative")
     msg["Subject"] = f"✅ INVENTORY RECEIVED — {product_name}"
@@ -913,18 +995,8 @@ def send_sla_email_alert(db: Session, subject: str, message: str) -> bool:
     """Email management when an order crosses an SLA delay threshold."""
     if not is_email_automation_enabled(db, "sla_alerts"):
         return False
-    recipients = [REPORT_RECIPIENT_EMAIL] if REPORT_RECIPIENT_EMAIL else []
-    try:
-        for (email,) in db.query(models.User.email).filter(
-            models.User.is_active == True,
-            models.User.email.isnot(None),
-            models.User.role.in_(["admin", "manager"]),
-        ).all():
-            if email and email.strip() and email.strip() not in recipients:
-                recipients.append(email.strip())
-    except Exception:
-        pass
-    if not recipients or not SMTP_HOST or not SMTP_PORT or not SMTP_USERNAME or not SMTP_PASSWORD or not SMTP_FROM_EMAIL:
+    recipients = get_email_recipients(db, "sla_alerts")
+    if not SMTP_HOST or not SMTP_PORT or not SMTP_USERNAME or not SMTP_PASSWORD or not SMTP_FROM_EMAIL:
         return False
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
@@ -950,11 +1022,12 @@ def send_daily_report_email_job():
     """
     Scheduler job wrapper that handles Session creation.
     """
-    logger.info("Nightly report email job triggered by scheduler...")
+    logger.info("Daily 10:15 AM report email job triggered by scheduler...")
     db = SessionLocal()
     try:
-        # Generate and send report for the current day (UTC)
-        send_daily_report_email(db)
+        # At 10:15 AM, report the completed previous Pakistan calendar day.
+        report_date = datetime.now(PAKISTAN_TZ) - timedelta(days=1)
+        send_daily_report_email(db, date_str=report_date.strftime("%Y-%m-%d"))
     finally:
         db.close()
 
@@ -966,14 +1039,14 @@ def schedule_daily_report(scheduler: AsyncIOScheduler):
     db = SessionLocal()
     try:
         enabled = is_email_automation_enabled(db, "daily_report")
-        time_str = get_email_setting(db, "email.daily_report.time", os.getenv("REPORT_SEND_TIME", "23:50"))
+        time_str = get_email_setting(db, "email.daily_report.time", os.getenv("REPORT_SEND_TIME", "10:15"))
     finally:
         db.close()
     try:
         hour, minute = map(int, time_str.split(":"))
     except Exception:
-        logger.error(f"Invalid REPORT_SEND_TIME format '{time_str}'. Expected HH:MM. Defaulting to 23:50.")
-        hour, minute = 23, 50
+        logger.error(f"Invalid REPORT_SEND_TIME format '{time_str}'. Expected HH:MM. Defaulting to 10:15.")
+        hour, minute = 10, 15
 
     # Remove existing job if present to support live re-scheduling
     try:
@@ -982,10 +1055,10 @@ def schedule_daily_report(scheduler: AsyncIOScheduler):
         pass
 
     if not enabled:
-        logger.info("Nightly email report is disabled.")
+        logger.info("Daily email report is disabled.")
         return
 
-    logger.info(f"Scheduling nightly email report job at {hour:02d}:{minute:02d} daily.")
+    logger.info(f"Scheduling daily email report job at {hour:02d}:{minute:02d} Pakistan time.")
 
     scheduler.add_job(
         send_daily_report_email_job,
@@ -993,5 +1066,6 @@ def schedule_daily_report(scheduler: AsyncIOScheduler):
         hour=hour,
         minute=minute,
         id="daily_email_report",
-        replace_existing=True
+        replace_existing=True,
+        timezone=PAKISTAN_TZ,
     )

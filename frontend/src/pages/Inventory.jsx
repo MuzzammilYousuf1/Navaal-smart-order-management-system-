@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import {
   Boxes, AlertTriangle, Plus, RefreshCw, ArrowUpRight, ArrowDownRight, PackageCheck,
-  Trash2, CheckCircle, Bot, BotOff, Edit3
+  Trash2, CheckCircle, Bot, BotOff, Edit3, FileSpreadsheet, Upload
 } from "lucide-react";
-import api from "../api/client";
+import api, { API_BASE } from "../api/client";
 import useAuth from "../store/useAuth";
+import { serverDate } from "../utils/dates";
 
 // ── Unit display helpers ───────────────────────────────────────────────────────
 // These helpers normalize how stock quantities and prices are displayed,
@@ -61,6 +62,8 @@ export default function Inventory() {
   const [updating, setUpdating] = useState(false);
   const [priceProduct, setPriceProduct] = useState(null);
   const [priceValue, setPriceValue] = useState("");
+  const [importLoading, setImportLoading] = useState(false);
+  const [importErrors, setImportErrors] = useState([]);
 
   // Stock Correction (set to exact value) state
   const [correctProduct, setCorrectProduct] = useState(null);
@@ -78,7 +81,7 @@ export default function Inventory() {
   // New Product Modal state
   const [showNewModal, setShowNewModal] = useState(false);
   const [newProd, setNewProd] = useState({
-    name: "", sku: "", category: "General", unit: "unit", unit_price: 500, stock_qty: 20, low_stock_threshold: 10,
+    name: "", sku: "", category: "General", pricing_type: "fixed", unit: "unit", unit_price: 500, stock_qty: 20, low_stock_threshold: 10,
     base_product_id: "", unit_multiplier: 1.0
   });
 
@@ -213,7 +216,7 @@ export default function Inventory() {
       await api.post("/api/inventory/products", payload);
       setShowNewModal(false);
       setNewProd({
-        name: "", sku: "", category: "General", unit: "unit", unit_price: 500, stock_qty: 20, low_stock_threshold: 10,
+        name: "", sku: "", category: "General", pricing_type: "fixed", unit: "unit", unit_price: 500, stock_qty: 20, low_stock_threshold: 10,
         base_product_id: "", unit_multiplier: 1.0
       });
       fetchData();
@@ -252,6 +255,29 @@ export default function Inventory() {
 
   const categories = Array.from(new Set(products.map((p) => p.category).filter(Boolean)));
 
+  const downloadProductTemplate = () => {
+    const token = localStorage.getItem("sof_token");
+    window.open(`${API_BASE}/api/inventory/template?token=${encodeURIComponent(token)}`, "_blank");
+  };
+
+  const importProducts = async (file) => {
+    if (!file) return;
+    setImportLoading(true);
+    setImportErrors([]);
+    const formData = new FormData();
+    formData.append("file", file);
+    try {
+      const { data } = await api.post("/api/inventory/import-csv", formData, { headers: { "Content-Type": "multipart/form-data" } });
+      showStatus(data.message, "success");
+      setImportErrors(data.errors || []);
+      fetchData();
+    } catch (err) {
+      showStatus(err.response?.data?.detail || "Import failed", "error");
+    } finally {
+      setImportLoading(false);
+    }
+  };
+
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-6">
       {/* Header */}
@@ -266,6 +292,13 @@ export default function Inventory() {
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          <button onClick={downloadProductTemplate} className="btn-secondary text-xs" title="Download product CSV template">
+            <FileSpreadsheet className="w-3.5 h-3.5" /> Template
+          </button>
+          <label className="btn-secondary text-xs cursor-pointer" title="Import products from CSV">
+            <Upload className="w-3.5 h-3.5" /> {importLoading ? "Importing..." : "Import CSV"}
+            <input type="file" accept=".csv" className="hidden" disabled={importLoading} onChange={(e) => importProducts(e.target.files[0])} />
+          </label>
           <button onClick={fetchData} className="btn-secondary text-xs">
             <RefreshCw className="w-3.5 h-3.5" /> Refresh
           </button>
@@ -287,6 +320,13 @@ export default function Inventory() {
             : <AlertTriangle className="w-5 h-5 shrink-0" />
           }
           <p className="text-sm font-medium">{statusMsg}</p>
+        </div>
+      )}
+
+      {importErrors.length > 0 && (
+        <div className="card border border-amber-700/50 bg-amber-950/20 space-y-1">
+          <p className="text-xs font-bold text-amber-300">Import warnings ({importErrors.length})</p>
+          {importErrors.slice(0, 10).map((error, index) => <p key={index} className="text-xs text-amber-200">{error}</p>)}
         </div>
       )}
 
@@ -548,7 +588,7 @@ export default function Inventory() {
                     <p className="text-xs text-brand-400">{m.note || m.movement_type}</p>
                     <div className="flex items-center justify-between text-[10px] text-brand-600 pt-1 border-t border-surface-700/60">
                       <span>After: {m.quantity_after} units</span>
-                      <span>{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      <span>{serverDate(m.created_at)?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                     </div>
                   </div>
                 );
@@ -881,18 +921,25 @@ export default function Inventory() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="label">Unit of Measure</label>
-                  <input
-                    type="text"
-                    className="input"
-                    placeholder="e.g. egg, pack of 6, kg, g"
-                    value={newProd.unit}
-                    onChange={(e) => setNewProd({ ...newProd, unit: e.target.value })}
-                    required
-                  />
+                  <label className="label">Pricing Type</label>
+                  <select className="select" value={newProd.pricing_type} onChange={(e) => setNewProd({ ...newProd, pricing_type: e.target.value, unit: e.target.value === "by_weight" ? "kg" : "unit" })}>
+                    <option value="fixed">Fixed quantity</option>
+                    <option value="by_weight">By weight (price per kg)</option>
+                  </select>
                 </div>
                 <div>
-                  <label className="label">Calculated Unit Price (PKR)</label>
+                  <label className="label">Unit of Measure</label>
+                  {newProd.pricing_type === "by_weight" ? (
+                    <select className="select" value={newProd.unit} onChange={(e) => setNewProd({ ...newProd, unit: e.target.value })}>
+                      <option value="kg">kg</option>
+                      <option value="g">g</option>
+                    </select>
+                  ) : (
+                    <input type="text" className="input" placeholder="e.g. egg, pack of 6" value={newProd.unit} onChange={(e) => setNewProd({ ...newProd, unit: e.target.value })} required />
+                  )}
+                </div>
+                <div className={newProd.pricing_type === "by_weight" ? "col-span-2" : ""}>
+                  <label className="label">{newProd.pricing_type === "by_weight" ? "Price per kg (PKR)" : "Calculated Unit Price (PKR)"}</label>
                   <input
                     type="number"
                     step="any"

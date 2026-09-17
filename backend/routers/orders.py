@@ -105,7 +105,19 @@ def create_order(
 ):
     _validate_rider_assignment(db, data.assigned_rider_name)
     order_number = _generate_order_number(db)
-    total = sum(item.unit_price * item.quantity for item in data.items)
+    total = 0.0
+    for item in data.items:
+        product = None
+        if item.product_id:
+            product = db.query(models.Product).filter(models.Product.id == item.product_id, models.Product.is_active == True).first()
+        if not product:
+            product = db.query(models.Product).filter(models.Product.name.ilike(f"%{item.product_name}%"), models.Product.is_active == True).first()
+        if product and product.pricing_type == "by_weight":
+            if not item.weight_kg or item.weight_kg <= 0:
+                raise HTTPException(status_code=400, detail=f"Actual weight is required for {product.name}")
+            total += item.unit_price * item.weight_kg
+        else:
+            total += item.unit_price * item.quantity
 
     pay_method = data.payment_method or "cod"
     pay_status = data.payment_status or ("received" if (data.amount_received or 0) > 0 else "cod")
@@ -140,7 +152,9 @@ def create_order(
                     target_product = base_p
 
             multiplier = product.unit_multiplier or 1
-            deduct_qty = item_data.quantity * multiplier
+            deduct_qty = item_data.weight_kg if product.pricing_type == "by_weight" else item_data.quantity * multiplier
+            if product.pricing_type == "by_weight" and (not item_data.weight_kg or item_data.weight_kg <= 0):
+                raise HTTPException(status_code=400, detail=f"Actual weight is required for {product.name}")
 
             if target_product.stock_qty < deduct_qty:
                 db.add(models.NotificationLog(
@@ -213,8 +227,9 @@ def create_order(
             product_id=product_id,
             product_name=item_data.product_name,
             quantity=item_data.quantity,
+            weight_kg=item_data.weight_kg,
             unit_price=item_data.unit_price,
-            total_price=item_data.unit_price * item_data.quantity,
+            total_price=item_data.unit_price * (item_data.weight_kg if item_data.weight_kg else item_data.quantity),
         )
         db.add(item)
 
@@ -239,7 +254,7 @@ def create_order(
                     target_product = base_p
 
             multiplier = product.unit_multiplier or 1
-            deduct_qty = item_data.quantity * multiplier
+            deduct_qty = item_data.weight_kg if product.pricing_type == "by_weight" else item_data.quantity * multiplier
 
             target_product.stock_qty -= deduct_qty
             movement = models.StockMovement(
@@ -248,7 +263,7 @@ def create_order(
                 movement_type="sale",
                 quantity_change=-deduct_qty,
                 quantity_after=target_product.stock_qty,
-                note=f"Sold {item_data.quantity}x {product.name} ({multiplier} units/pack) via Order {order_number}",
+                note=(f"Sold {item_data.weight_kg} kg of {product.name} via Order {order_number}" if product.pricing_type == "by_weight" else f"Sold {item_data.quantity}x {product.name} ({multiplier} units/pack) via Order {order_number}"),
                 created_by=current_user.name,
                 created_at=datetime.utcnow(),
             )
@@ -319,7 +334,7 @@ def create_order(
         from routers.customers import _upsert_customer_from_order
         import json as _json
         items_snapshot = _json.dumps([
-            {"product_name": it.product_name, "quantity": it.quantity, "unit_price": it.unit_price}
+            {"product_id": it.product_id, "product_name": it.product_name, "quantity": it.quantity, "weight_kg": it.weight_kg, "unit_price": it.unit_price, "pricing_type": getattr(it.product, "pricing_type", "fixed") if it.product else "fixed"}
             for it in order.items
         ])
         _upsert_customer_from_order(db, order, items_snapshot)

@@ -5,10 +5,13 @@ Inventory / Stock Management Router
 - Manual restock
 - Stock movement audit log
 """
+import csv
+import io
 from typing import List, Optional
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -17,6 +20,56 @@ import schemas
 from auth import get_current_user
 
 router = APIRouter(prefix="/api/inventory", tags=["inventory"])
+
+
+def _validate_pricing(pricing_type: str, unit: str) -> None:
+    if pricing_type not in ("fixed", "by_weight"):
+        raise HTTPException(status_code=400, detail="pricing_type must be fixed or by_weight")
+    if pricing_type == "by_weight" and unit not in ("kg", "g"):
+        raise HTTPException(status_code=400, detail="Weight-based products must use kg or g as the unit")
+
+
+@router.get("/template")
+def product_csv_template():
+    out = io.StringIO()
+    csv.writer(out).writerow(["name", "sku", "category", "unit", "unit_price", "stock_qty", "low_stock_threshold"])
+    out.seek(0)
+    return StreamingResponse(io.BytesIO(out.getvalue().encode("utf-8-sig")), media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="navaal_products_template.csv"'})
+
+
+@router.post("/import-csv")
+async def import_products_csv(file: UploadFile = File(...), db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    if current_user.role not in ("admin", "manager", "warehouse", "operations"):
+        raise HTTPException(status_code=403, detail="Not authorized")
+    if not file.filename or not file.filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only .csv files are supported")
+    reader = csv.DictReader(io.StringIO((await file.read()).decode("utf-8-sig")))
+    created, updated, errors = 0, 0, []
+    for row_number, row in enumerate(reader, start=2):
+        try:
+            name = (row.get("name") or row.get("Name") or "").strip()
+            sku = (row.get("sku") or row.get("SKU") or "").strip()
+            if not name or not sku:
+                raise ValueError("name and sku are required")
+            def number(key, fallback=0):
+                try: return float((row.get(key) or fallback))
+                except (TypeError, ValueError): return fallback
+            product = db.query(models.Product).filter(models.Product.sku == sku).first()
+            if product:
+                product.name = name
+                product.category = row.get("category") or product.category
+                product.unit = row.get("unit") or product.unit
+                product.unit_price = number("unit_price", product.unit_price)
+                product.low_stock_threshold = number("low_stock_threshold", product.low_stock_threshold)
+                updated += 1
+            else:
+                product = models.Product(name=name, sku=sku, category=row.get("category") or "General", unit=row.get("unit") or "unit", unit_price=number("unit_price"), stock_qty=number("stock_qty"), low_stock_threshold=number("low_stock_threshold", 10), is_active=True)
+                db.add(product)
+                created += 1
+        except Exception as exc:
+            errors.append(f"Row {row_number}: {exc}")
+    db.commit()
+    return {"message": f"Import complete: {created} created, {updated} updated.", "errors": errors}
 
 
 # ─── Helper ───────────────────────────────────────────────────────────────────
@@ -113,6 +166,7 @@ def create_product(
 ):
     if current_user.role not in ("admin", "manager"):
         raise HTTPException(status_code=403, detail="Only admin/manager can add products")
+    _validate_pricing(data.pricing_type, data.unit or "unit")
 
     existing = db.query(models.Product).filter(models.Product.sku == data.sku).first()
     if existing:
@@ -127,6 +181,7 @@ def create_product(
         sku=data.sku,
         category=data.category,
         unit=data.unit,
+        pricing_type=data.pricing_type,
         unit_price=data.unit_price,
         stock_qty=0.0,          # Always start at 0; _log_movement will add for base products
         low_stock_threshold=data.low_stock_threshold,
@@ -186,6 +241,10 @@ def update_product(
     p = db.query(models.Product).filter(models.Product.id == product_id).first()
     if not p:
         raise HTTPException(status_code=404, detail="Product not found")
+
+    proposed_type = data.pricing_type if data.pricing_type is not None else p.pricing_type
+    proposed_unit = data.unit if data.unit is not None else p.unit
+    _validate_pricing(proposed_type, proposed_unit)
 
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(p, field, value)

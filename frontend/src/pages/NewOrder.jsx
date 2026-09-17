@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { ArrowLeft, Plus, Trash2, Package, MapPin, ExternalLink, RefreshCw, AlertCircle } from "lucide-react";
 import api, { getErrorMessage } from "../api/client";
 import CustomerAutocomplete from "../components/CustomerAutocomplete";
+import { pakistanDateInput } from "../utils/dates";
 
 const DEFAULT_FORM = {
   customer_name: "",
@@ -14,7 +15,7 @@ const DEFAULT_FORM = {
   channel: "b2c",
   priority: "normal",
   payment_status: "cod",
-  delivery_date: new Date().toISOString().split("T")[0],
+  delivery_date: pakistanDateInput(),
   notes: "",
   assigned_rider_name: "",
 };
@@ -23,11 +24,12 @@ export default function NewOrder() {
   const navigate = useNavigate();
   const location = useLocation();
   const [form, setForm] = useState(DEFAULT_FORM);
-  const [items, setItems] = useState([{ product_id: "", product_name: "", quantity: 1, unit_price: 0 }]);
+  const [items, setItems] = useState([{ product_id: "", product_name: "", quantity: 1, weight_kg: "", unit_price: 0, pricing_type: "fixed" }]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [products, setProducts] = useState([]);
   const [prefilled, setPrefilled] = useState(false);
+  const [riders, setRiders] = useState([]);
 
   useEffect(() => {
     if (location.state?.customer) {
@@ -41,6 +43,12 @@ export default function NewOrder() {
     api.get("/api/inventory/products")
       .then(({ data }) => setProducts(data))
       .catch(() => setError("Could not load active inventory items."));
+  }, []);
+
+  useEffect(() => {
+    api.get("/api/orders/riders/summary")
+      .then(({ data }) => setRiders(data.filter((r) => r.rider_id)))
+      .catch(() => setRiders([]));
   }, []);
 
   const setField = (k, v) => {
@@ -79,6 +87,8 @@ export default function NewOrder() {
             product_name: it.product_name,
             quantity: it.quantity,
             unit_price: it.unit_price,
+            weight_kg: it.weight_kg || "",
+            pricing_type: it.pricing_type || "fixed",
           })));
           setPrefilled(true);
         }
@@ -105,6 +115,8 @@ export default function NewOrder() {
           product_id: product.id,
           product_name: product.name,
           unit_price: product.unit_price,
+          pricing_type: product.pricing_type || "fixed",
+          weight_kg: product.pricing_type === "by_weight" ? "" : undefined,
         };
       } else {
         next[i] = { ...next[i], product_id: "", product_name: "" };
@@ -113,17 +125,17 @@ export default function NewOrder() {
     });
   };
 
-  const addItem = () => setItems((prev) => [...prev, { product_id: "", product_name: "", quantity: 1, unit_price: 0 }]);
+  const addItem = () => setItems((prev) => [...prev, { product_id: "", product_name: "", quantity: 1, weight_kg: "", unit_price: 0, pricing_type: "fixed" }]);
   const removeItem = (i) => {
     setItems((prev) => {
       if (prev.length <= 1) {
-        return [{ product_id: "", product_name: "", quantity: 1, unit_price: 0 }];
+        return [{ product_id: "", product_name: "", quantity: 1, weight_kg: "", unit_price: 0, pricing_type: "fixed" }];
       }
       return prev.filter((_, idx) => idx !== i);
     });
   };
 
-  const total = items.reduce((s, it) => s + (Number(it.unit_price) * Number(it.quantity)), 0);
+  const total = items.reduce((s, it) => s + (it.pricing_type === "by_weight" ? Number(it.unit_price) * Number(it.weight_kg || 0) : Number(it.unit_price) * Number(it.quantity)), 0);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -163,6 +175,10 @@ export default function NewOrder() {
         setError(`Quantity for Item #${idx + 1} must be at least 1.`);
         return;
       }
+      if (it.pricing_type === "by_weight" && Number(it.weight_kg) <= 0) {
+        setError(`Actual weight for Item #${idx + 1} must be greater than 0 kg.`);
+        return;
+      }
     }
 
     setLoading(true);
@@ -173,6 +189,7 @@ export default function NewOrder() {
           product_id: Number(i.product_id),
           product_name: i.product_name,
           quantity: Number(i.quantity),
+          weight_kg: i.pricing_type === "by_weight" ? Number(i.weight_kg) : undefined,
           unit_price: Number(i.unit_price),
         })),
       };
@@ -311,6 +328,14 @@ export default function NewOrder() {
                 />
                 <p className="text-xs text-brand-600 mt-1.5">Schedule order for today, tomorrow, or a future delivery date.</p>
               </div>
+              <div>
+                <label className="label">Assigned Rider</label>
+                <select className="select" value={form.assigned_rider_name || ""} onChange={(e) => setField("assigned_rider_name", e.target.value)}>
+                  <option value="">Unassigned</option>
+                  {riders.map((rider) => <option key={rider.rider_id} value={rider.rider_name}>{rider.rider_name}</option>)}
+                </select>
+                <p className="text-xs text-brand-600 mt-1.5">Only active Rider accounts can be assigned.</p>
+              </div>
             </div>
           </div>
 
@@ -339,7 +364,7 @@ export default function NewOrder() {
                     >
                       <option value="">Select product...</option>
                       {sellableProducts.map((p) => {
-                        const packInfo = p.unit_multiplier && p.unit_multiplier > 1 ? ` (${p.unit_multiplier} ${p.unit}s/pack)` : ` (${p.unit})`;
+                        const packInfo = p.pricing_type === "by_weight" ? " (price per kg)" : (p.unit_multiplier && p.unit_multiplier > 1 ? ` (${p.unit_multiplier} ${p.unit}s/pack)` : ` (${p.unit})`);
                         return (
                           <option key={p.id} value={p.id}>
                             {p.name} {packInfo} — PKR {p.unit_price} [{p.stock_qty} in stock]
@@ -349,18 +374,15 @@ export default function NewOrder() {
                     </select>
                   </div>
                   <div className="sm:col-span-2">
-                    <label className="label">Qty *</label>
-                    <input
-                      className="input text-center"
-                      type="number"
-                      min={1}
-                      value={item.quantity}
-                      onChange={(e) => setItem(i, "quantity", e.target.value)}
-                      required
-                    />
+                    <label className="label">{item.pricing_type === "by_weight" ? "Actual Weight (kg) *" : "Qty *"}</label>
+                    {item.pricing_type === "by_weight" ? (
+                      <input className="input text-center" type="number" min="0.001" step="0.001" value={item.weight_kg} onChange={(e) => setItem(i, "weight_kg", e.target.value)} placeholder="e.g. 1.35" required />
+                    ) : (
+                      <input className="input text-center" type="number" min={1} value={item.quantity} onChange={(e) => setItem(i, "quantity", e.target.value)} required />
+                    )}
                   </div>
                   <div className="sm:col-span-3">
-                    <label className="label">Unit Price (PKR) *</label>
+                    <label className="label">{item.pricing_type === "by_weight" ? "Price per kg (PKR) *" : "Unit Price (PKR) *"}</label>
                     <input
                       className="input"
                       type="number"
@@ -371,6 +393,7 @@ export default function NewOrder() {
                       required
                     />
                   </div>
+                  {item.pricing_type === "by_weight" && <p className="sm:col-span-11 text-xs text-emerald-400">Line total: PKR {(Number(item.weight_kg || 0) * Number(item.unit_price || 0)).toLocaleString()} ({item.weight_kg || 0} kg × PKR {item.unit_price || 0}/kg)</p>}
                   <div className="sm:col-span-1 flex justify-end sm:justify-center">
                     <button type="button" onClick={() => removeItem(i)} className="btn-danger p-2" title="Remove item">
                       <Trash2 className="w-3.5 h-3.5" />

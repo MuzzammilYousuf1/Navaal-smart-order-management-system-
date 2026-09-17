@@ -19,6 +19,7 @@ class EmailAutomationUpdate(BaseModel):
     key: str
     enabled: bool
     send_time: Optional[str] = None
+    recipient_emails: Optional[str] = None
 
 
 @router.get("/email-settings")
@@ -35,6 +36,7 @@ def get_email_settings(
             "trigger": meta["trigger"],
             "enabled": get_email_setting(db, f"email.{key}.enabled", "true" if meta.get("default_enabled", True) else "false").lower() != "false",
             "send_time": get_email_setting(db, f"email.{key}.time", meta["default_time"]),
+            "recipient_emails": get_email_setting(db, f"email.{key}.recipients", ""),
         })
     return {"smtp_configured": bool(os.getenv("SMTP_HOST") and os.getenv("SMTP_USERNAME") and os.getenv("SMTP_PASSWORD") and os.getenv("SMTP_FROM_EMAIL")), "items": result}
 
@@ -55,6 +57,11 @@ def update_email_settings(
                 raise ValueError
         except ValueError:
             raise HTTPException(status_code=400, detail="Send time must use HH:MM format.")
+    if data.recipient_emails is not None:
+        recipients = [email.strip() for email in data.recipient_emails.split(",") if email.strip()]
+        for email in recipients:
+            if "@" not in email or " " in email:
+                raise HTTPException(status_code=400, detail=f"Invalid recipient email: {email}")
 
     def save(key: str, value: str):
         row = db.query(models.Settings).filter(models.Settings.key == key).first()
@@ -67,6 +74,8 @@ def update_email_settings(
     save(f"email.{data.key}.enabled", "true" if data.enabled else "false")
     if data.key == "daily_report" and data.send_time:
         save("email.daily_report.time", data.send_time)
+    if data.recipient_emails is not None:
+        save(f"email.{data.key}.recipients", data.recipient_emails.strip())
     db.commit()
 
     if data.key == "daily_report":

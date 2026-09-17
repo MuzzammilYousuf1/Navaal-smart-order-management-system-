@@ -189,6 +189,10 @@ export default function Orders() {
   };
 
   const setFilter = (key, val) => setFilters((f) => ({ ...f, [key]: val }));
+  const filteredTotals = orders.reduce((totals, order) => ({
+    amount: totals.amount + Number(order.total_amount || 0),
+    received: totals.received + Number(order.amount_received || 0),
+  }), { amount: 0, received: 0 });
 
   return (
     <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5 pt-14 sm:pt-6">
@@ -256,6 +260,12 @@ export default function Orders() {
           {importErrors.slice(0, 10).map((error, index) => <p key={index} className="text-xs text-amber-200">{error}</p>)}
         </div>
       )}
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="card"><p className="text-xs text-brand-500 uppercase">Filtered Orders</p><p className="text-2xl font-bold text-white mt-1">{orders.length}</p><p className="text-xs text-brand-600">Based on current filters</p></div>
+        <div className="card"><p className="text-xs text-brand-500 uppercase">Order Amount</p><p className="text-2xl font-bold text-emerald-300 mt-1">PKR {filteredTotals.amount.toLocaleString()}</p><p className="text-xs text-brand-600">Customer charges in this view</p></div>
+        <div className="card"><p className="text-xs text-brand-500 uppercase">Received</p><p className="text-2xl font-bold text-sky-300 mt-1">PKR {filteredTotals.received.toLocaleString()}</p><p className="text-xs text-brand-600">Collected/recorded payments</p></div>
+      </div>
 
       {/* Filters */}
       <div className="card">
@@ -360,6 +370,7 @@ export default function Orders() {
                     <td className="td">
                       <p className="font-medium text-white">{order.customer_name}</p>
                       <p className="text-xs text-brand-600">{order.customer_phone}</p>
+                      {order.items?.length > 0 && <p className="text-[10px] text-brand-400 mt-1 truncate max-w-[190px]" title={order.items.map((item) => `${item.product_name} × ${item.weight_kg || item.quantity}`).join(", ")}>{order.items.map((item) => `${item.product_name} × ${item.weight_kg ? `${item.weight_kg}kg` : item.quantity}`).join(", ")}</p>}
                     </td>
                     <td className="td text-brand-400 text-xs max-w-[150px]" title={order.delivery_address || order.city}>
                       {order.city || order.delivery_address || "—"}

@@ -5,6 +5,7 @@ import {
 } from "recharts";
 import { TrendingUp, Package, CheckCircle, AlertTriangle, RefreshCw, Printer, Calendar, ShieldAlert, FileText, Mail, Download, Send, X, CheckCircle2 } from "lucide-react";
 import api, { getErrorMessage } from "../api/client";
+import { pakistanDateInput, pakistanMonthInput } from "../utils/dates";
 
 const COLORS = ["#16a34a", "#f59e0b", "#3b82f6", "#ef4444", "#64748b"];
 
@@ -31,15 +32,15 @@ export default function Reports() {
   const [sla, setSla] = useState(null);
   const [days, setDays] = useState(7);
   const [timeframeType, setTimeframeType] = useState("preset"); // preset | single_day | custom
-  const [singleDate, setSingleDate] = useState(new Date().toISOString().split("T")[0]);
-  const [startDate, setStartDate] = useState(new Date(Date.now() - 7 * 86400000).toISOString().split("T")[0]);
-  const [endDate, setEndDate] = useState(new Date().toISOString().split("T")[0]);
+  const [singleDate, setSingleDate] = useState(pakistanDateInput());
+  const [startDate, setStartDate] = useState(pakistanDateInput(new Date(Date.now() - 7 * 86400000)));
+  const [endDate, setEndDate] = useState(pakistanDateInput());
 
   const [inventoryPerf, setInventoryPerf] = useState([]);
   const [loading, setLoading] = useState(true);
 
   // Monthly Report State
-  const [selectedMonth, setSelectedMonth] = useState("2026-08");
+  const [selectedMonth, setSelectedMonth] = useState(pakistanMonthInput());
   const [monthlyData, setMonthlyData] = useState(null);
   const [monthlyLoading, setMonthlyLoading] = useState(false);
 

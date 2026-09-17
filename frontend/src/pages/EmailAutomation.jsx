@@ -29,6 +29,7 @@ export default function EmailAutomation() {
         key: item.key,
         enabled: next.enabled,
         send_time: next.send_time || undefined,
+        recipient_emails: next.recipient_emails || "",
       });
       setSettings((current) => ({
         ...current,
@@ -64,7 +65,7 @@ export default function EmailAutomation() {
           <Settings className="w-5 h-5 text-emerald-400" />
           <div>
             <h2 className="font-bold text-white">Configured notifications</h2>
-            <p className="text-xs text-brand-500">Recipients are the configured owner address plus active Admin/Manager email addresses.</p>
+            <p className="text-xs text-brand-500">Set recipient email(s) per notification, separated by commas. Leave blank to use the configured owner plus active Admin/Manager emails.</p>
           </div>
         </div>
 
@@ -81,6 +82,14 @@ export default function EmailAutomation() {
                   <input type="time" className="input py-1 px-2 w-24 text-xs" value={item.send_time} onChange={(e) => updateSetting(item, { send_time: e.target.value })} />
                 </label>
               )}
+              <input
+                type="text"
+                className="input py-1 px-2 w-64 text-xs"
+                value={item.recipient_emails || ""}
+                placeholder="Recipient email(s), comma separated"
+                title="Leave blank to use the configured owner and Admin/Manager emails"
+                onChange={(e) => updateSetting(item, { recipient_emails: e.target.value })}
+              />
               <label className="flex items-center gap-2 text-xs text-brand-300 cursor-pointer">
                 <input type="checkbox" checked={item.enabled} disabled={saving === item.key} onChange={(e) => updateSetting(item, { enabled: e.target.checked })} className="rounded border-emerald-600 text-emerald-600" />
                 {item.enabled ? "Enabled" : "Disabled"}
@@ -100,7 +109,7 @@ export default function EmailAutomation() {
         <p className="font-semibold text-brand-300">Currently implemented email events</p>
         <p>• Low-stock/backorder alert: sent immediately when an order needs more stock.</p>
         <p>• Inventory-restock alert: sent immediately after stock is received.</p>
-        <p>• Nightly operations PDF report: sent once daily at the selected time.</p>
+        <p>• Daily operations report: sent at the selected Pakistan time (default 10:15 AM) with totals, statuses, per-rider orders/deliveries/returns/amounts, inventory activity, and the detailed order log.</p>
         <p>• SLA delay/escalation alert: optional immediate emails at 45, 60, 75, and 90 minutes.</p>
         <p>Gate-pass notifications remain inside the application because a gate pass is generated on demand.</p>
       </div>

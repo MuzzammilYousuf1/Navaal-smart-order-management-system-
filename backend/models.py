@@ -93,6 +93,7 @@ class OrderItem(Base):
     product_id = Column(Integer, ForeignKey("products.id"), nullable=True)
     product_name = Column(String, nullable=False)
     quantity = Column(Integer, default=1)
+    weight_kg = Column(Float, nullable=True)  # actual sold weight for by_weight products
     unit_price = Column(Float, default=0.0)
     total_price = Column(Float, default=0.0)
 
@@ -163,6 +164,7 @@ class Product(Base):
     sku = Column(String, unique=True, nullable=False)
     category = Column(String, nullable=True, default="General")
     unit = Column(String, default="unit")      # unit | kg | litre | g | ml
+    pricing_type = Column(String, default="fixed", nullable=False)  # fixed | by_weight
     unit_price = Column(Float, default=0.0)
     stock_qty = Column(Float, default=0.0)
     low_stock_threshold = Column(Float, default=10.0)
