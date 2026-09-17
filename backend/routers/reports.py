@@ -30,12 +30,26 @@ def get_email_settings(
     from email_reports import EMAIL_AUTOMATIONS, get_email_setting
     result = []
     for key, meta in EMAIL_AUTOMATIONS.items():
+        send_time = get_email_setting(db, f"email.{key}.time", meta["default_time"])
+        label = meta["label"]
+        trigger = meta["trigger"]
+        if key == "daily_report" and send_time:
+            try:
+                h, m = map(int, send_time.split(":"))
+                period = "AM" if h < 12 else "PM"
+                h_12 = h % 12 or 12
+                time_fmt = f"{h_12}:{m:02d} {period}"
+                label = f"Daily {time_fmt} operations report"
+                trigger = f"Scheduled daily at {time_fmt} Pakistan time"
+            except Exception:
+                pass
+
         result.append({
             "key": key,
-            "label": meta["label"],
-            "trigger": meta["trigger"],
+            "label": label,
+            "trigger": trigger,
             "enabled": get_email_setting(db, f"email.{key}.enabled", "true" if meta.get("default_enabled", True) else "false").lower() != "false",
-            "send_time": get_email_setting(db, f"email.{key}.time", meta["default_time"]),
+            "send_time": send_time,
             "recipient_emails": get_email_setting(db, f"email.{key}.recipients", ""),
         })
     return {"smtp_configured": bool(os.getenv("SMTP_HOST") and os.getenv("SMTP_USERNAME") and os.getenv("SMTP_PASSWORD") and os.getenv("SMTP_FROM_EMAIL")), "items": result}

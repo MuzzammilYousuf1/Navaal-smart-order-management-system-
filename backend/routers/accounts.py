@@ -84,24 +84,30 @@ def get_accounts_summary(
     b2b_count = db.query(models.Customer).filter(models.Customer.account_type == "b2b").count()
     b2c_count = db.query(models.Customer).filter(models.Customer.account_type == "b2c").count()
 
-    # Calculate net outstanding receivables (Debits - Credits)
-    debits_sum = db.query(func.sum(models.LedgerEntry.amount)).filter(models.LedgerEntry.entry_type == "debit").scalar() or 0.0
-    credits_sum = db.query(func.sum(models.LedgerEntry.amount)).filter(models.LedgerEntry.entry_type == "credit").scalar() or 0.0
-    total_receivable = round(debits_sum - credits_sum, 2)
+    # Calculate net outstanding receivables (B2B vs B2C)
+    b2b_debit = (db.query(func.sum(models.LedgerEntry.amount))
+         .outerjoin(models.Customer, models.Customer.phone == models.LedgerEntry.customer_phone)
+         .filter((models.Customer.account_type == "b2b") | (models.LedgerEntry.channel == "b2b"))
+         .filter(models.LedgerEntry.entry_type == "debit").scalar() or 0.0)
+    b2b_credit = (db.query(func.sum(models.LedgerEntry.amount))
+         .outerjoin(models.Customer, models.Customer.phone == models.LedgerEntry.customer_phone)
+         .filter((models.Customer.account_type == "b2b") | (models.LedgerEntry.channel == "b2b"))
+         .filter(models.LedgerEntry.entry_type == "credit").scalar() or 0.0)
+    b2b_receivable = round(b2b_debit - b2b_credit, 2)
 
-    # B2B vs B2C receivables
-    # We can aggregate by joining with Customer
-    b2b_receivable = round(
-        (db.query(func.sum(models.LedgerEntry.amount))
-         .join(models.Customer, models.Customer.phone == models.LedgerEntry.customer_phone)
-         .filter(models.Customer.account_type == "b2b", models.LedgerEntry.entry_type == "debit").scalar() or 0.0) -
-        (db.query(func.sum(models.LedgerEntry.amount))
-         .join(models.Customer, models.Customer.phone == models.LedgerEntry.customer_phone)
-         .filter(models.Customer.account_type == "b2b", models.LedgerEntry.entry_type == "credit").scalar() or 0.0),
-        2
-    )
+    b2c_debit = (db.query(func.sum(models.LedgerEntry.amount))
+         .outerjoin(models.Customer, models.Customer.phone == models.LedgerEntry.customer_phone)
+         .filter((models.Customer.account_type == "b2c") | (models.Customer.account_type.is_(None)))
+         .filter(models.LedgerEntry.channel != "b2b")
+         .filter(models.LedgerEntry.entry_type == "debit").scalar() or 0.0)
+    b2c_credit = (db.query(func.sum(models.LedgerEntry.amount))
+         .outerjoin(models.Customer, models.Customer.phone == models.LedgerEntry.customer_phone)
+         .filter((models.Customer.account_type == "b2c") | (models.Customer.account_type.is_(None)))
+         .filter(models.LedgerEntry.channel != "b2b")
+         .filter(models.LedgerEntry.entry_type == "credit").scalar() or 0.0)
+    b2c_receivable = round(b2c_debit - b2c_credit, 2)
 
-    b2c_receivable = round(total_receivable - b2b_receivable, 2)
+    total_receivable = round(b2b_receivable + b2c_receivable, 2)
 
     # Overdue invoices
     overdue_invoices_count = db.query(models.AccountInvoice).filter(

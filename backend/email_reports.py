@@ -850,19 +850,17 @@ def send_daily_report_email(
         )
         return False
 
-    # 23:50 was the old default. Move that legacy value to the requested
-    # morning schedule unless the owner has already selected another time.
+    time_str = get_email_setting(db, "email.daily_report.time", os.getenv("REPORT_SEND_TIME", "10:15"))
     if time_str == "23:50" and not os.getenv("REPORT_SEND_TIME"):
         time_str = "10:15"
-        db = SessionLocal()
         try:
             row = db.query(models.Settings).filter(models.Settings.key == "email.daily_report.time").first()
             if row:
                 row.value = "10:15"
                 row.updated_at = datetime.utcnow()
                 db.commit()
-        finally:
-            db.close()
+        except Exception as ex:
+            logger.warning(f"Could not update legacy time setting: {ex}")
 
     try:
         if date_str:
