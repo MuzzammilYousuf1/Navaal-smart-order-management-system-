@@ -1,7 +1,7 @@
 import { NavLink, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard, Package, PlusCircle, BarChart2, Settings,
-  Bell, Users, LogOut, Leaf, Menu, X, MapPin, Boxes, ClipboardList, QrCode, FileText, Calendar, BookUser, Wallet, Activity
+  Bell, Users, LogOut, Leaf, Menu, X, MapPin, Boxes, ClipboardList, QrCode, FileText, Calendar, BookUser, Wallet, Activity, FileSpreadsheet
 } from "lucide-react";
 import useAuth from "../store/useAuth";
 import { useState } from "react";
@@ -14,6 +14,7 @@ const navItems = [
   { to: "/customers",     icon: BookUser,        label: "Address Book" },
   { to: "/accounts",      icon: Wallet,          label: "Accounts" },
   { to: "/inventory",     icon: Boxes,           label: "Inventory" },
+  { to: "/daily-inventory", icon: FileSpreadsheet, label: "Daily Stock Log", adminOnly: true },
   { to: "/picklist",      icon: ClipboardList,   label: "Pick List" },
   { to: "/scan",          icon: QrCode,          label: "Scan QR" },
   { to: "/invoices",      icon: FileText,        label: "Invoices" },
@@ -72,12 +73,13 @@ export default function Sidebar({ alertCount = 0 }) {
       {/* Nav */}
       <nav className="flex-1 px-2 py-4 space-y-1 overflow-y-auto">
         {navItems
-          .filter(({ to }) => {
+          .filter(({ to, adminOnly }) => {
             const role = user?.role || "warehouse";
+            if (adminOnly && role !== "admin") return false;
             if (role === "admin" || role === "manager") return true;
             if (role === "rider") return ["/orders", "/tracking", "/notifications", "/activity"].includes(to);
             // Warehouse & Operations
-            const restricted = ["/accounts", "/invoices", "/reporting", "/reports", "/users", "/email-settings"];
+            const restricted = ["/accounts", "/invoices", "/reporting", "/reports", "/users", "/email-settings", "/daily-inventory"];
             return !restricted.includes(to);
           })
           .map(({ to, icon: Icon, label }) => (

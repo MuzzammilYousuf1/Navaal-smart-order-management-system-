@@ -408,3 +408,30 @@ class AuditLog(Base):
     created_at    = Column(DateTime, default=datetime.utcnow, index=True)
 
     user = relationship("User")
+
+
+class DailyInventoryLog(Base):
+    """
+    Daily Inventory Log — tracks daily stock additions, unit purchase prices,
+    spoilage, and breakage per product/category. Automatically synced when
+    restock/spoilage is recorded in main inventory, and editable by Admin.
+    """
+    __tablename__ = "daily_inventory_logs"
+
+    id             = Column(Integer, primary_key=True, index=True)
+    log_date       = Column(DateTime, default=datetime.utcnow, index=True)
+    product_id     = Column(Integer, ForeignKey("products.id"), nullable=True)
+    product_name   = Column(String, nullable=False)
+    category_name  = Column(String, default="General", index=True)
+    added_qty      = Column(Float, default=0.0)
+    unit_cost      = Column(Float, default=0.0)    # Daily purchase price per unit
+    total_cost     = Column(Float, default=0.0)    # added_qty * unit_cost
+    spoiled_qty    = Column(Float, default=0.0)
+    broken_qty     = Column(Float, default=0.0)
+    notes          = Column(Text, nullable=True)
+    created_by     = Column(String, nullable=True)
+    created_at     = Column(DateTime, default=datetime.utcnow)
+    updated_at     = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    product        = relationship("Product")
+

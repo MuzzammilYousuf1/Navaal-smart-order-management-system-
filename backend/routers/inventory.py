@@ -297,6 +297,15 @@ def restock_product(
         note = data.note or f"Bulk restock: +{data.quantity} {p.unit}s added"
         _log_movement(db, p, data.quantity, "restock", note=note, created_by=current_user.name)
 
+    # Auto sync with Daily Inventory Log
+    try:
+        from routers.daily_inventory import sync_daily_inventory_log
+        unit_c = data.unit_price if (data.unit_price is not None and data.unit_price >= 0) else (p.unit_price or 0.0)
+        qty_add = change if p.base_product_id else data.quantity
+        sync_daily_inventory_log(db, p, added_qty=qty_add, unit_cost=unit_c, note=data.note, created_by=current_user.name)
+    except Exception:
+        pass
+
     db.commit()
     db.refresh(p)
 
@@ -423,6 +432,17 @@ def report_spoilage(
         # Direct bulk / standalone product spoilage
         note = f"{m_label} reported: -{data.quantity} {p.unit}s | {action_details}"
         _log_movement(db, p, -data.quantity, m_type, note=note, created_by=current_user.name)
+
+    # Auto sync with Daily Inventory Log
+    try:
+        from routers.daily_inventory import sync_daily_inventory_log
+        spoil_qty = deduct_qty if p.base_product_id else data.quantity
+        if m_type == "broken":
+            sync_daily_inventory_log(db, p, broken_qty=spoil_qty, note=action_details, created_by=current_user.name)
+        else:
+            sync_daily_inventory_log(db, p, spoiled_qty=spoil_qty, note=action_details, created_by=current_user.name)
+    except Exception:
+        pass
 
     db.commit()
     db.refresh(p)

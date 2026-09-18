@@ -16,6 +16,7 @@ import Notifications from "./pages/Notifications";
 import Users from "./pages/Users";
 import RiderMap from "./pages/RiderMap";
 import Inventory from "./pages/Inventory";
+import DailyInventory from "./pages/DailyInventory";
 import PickList from "./pages/PickList";
 import ScanOrder from "./pages/ScanOrder";
 import Invoices from "./pages/Invoices";
@@ -57,6 +58,7 @@ function ProtectedLayout() {
           <Route path="/orders/new"     element={<NewOrder />} />
           <Route path="/orders/:id"     element={<OrderDetail />} />
           <Route path="/inventory"      element={<Inventory />} />
+          <Route path="/daily-inventory" element={<RequireRole roles={["admin"]}><DailyInventory /></RequireRole>} />
           <Route path="/picklist"       element={<PickList />} />
           <Route path="/scan"           element={<ScanOrder />} />
           <Route path="/invoices"       element={<RequireRole roles={["admin", "manager"]}><Invoices /></RequireRole>} />

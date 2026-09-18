@@ -564,3 +564,67 @@ class LedgerStatement(BaseModel):
     total_credit: float
     balance: float                         # positive = customer owes money
     entries: List[LedgerEntryOut]
+
+
+# ─── Daily Inventory Log & Stock Reports ─────────────────────────────────────
+
+class DailyInventoryLogCreate(BaseModel):
+    log_date: Optional[datetime] = None
+    product_id: Optional[int] = None
+    product_name: str
+    category_name: Optional[str] = "General"
+    added_qty: float = 0.0
+    unit_cost: float = 0.0
+    total_cost: Optional[float] = None
+    spoiled_qty: float = 0.0
+    broken_qty: float = 0.0
+    notes: Optional[str] = None
+
+
+class DailyInventoryLogUpdate(BaseModel):
+    log_date: Optional[datetime] = None
+    added_qty: Optional[float] = None
+    unit_cost: Optional[float] = None
+    total_cost: Optional[float] = None
+    spoiled_qty: Optional[float] = None
+    broken_qty: Optional[float] = None
+    notes: Optional[str] = None
+
+
+class DailyInventoryLogOut(BaseModel):
+    id: int
+    log_date: datetime
+    product_id: Optional[int]
+    product_name: str
+    category_name: str
+    added_qty: float
+    unit_cost: float
+    total_cost: float
+    spoiled_qty: float
+    broken_qty: float
+    notes: Optional[str]
+    created_by: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class CategoryStockSummary(BaseModel):
+    category_name: str
+    total_stock_in_hand: float
+    total_added: float
+    total_purchase_cost: float
+    total_spoiled: float
+    total_broken: float
+
+
+class DailyInventorySummaryOut(BaseModel):
+    total_stock_in_hand: float
+    total_added: float
+    total_purchase_cost: float
+    total_spoiled: float
+    total_broken: float
+    categories: List[CategoryStockSummary]
+

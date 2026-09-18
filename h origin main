@@ -1,0 +1,15 @@
+ backend/email_reports.py               |  75 [32m+++[m[31m-[m
+ backend/main.py                        |   3 [32m+[m[31m-[m
+ backend/routers/__init__.py            |   2 [32m+[m[31m-[m
+ backend/routers/data_mgmt.py           | 727 [31m---------------------------------[m
+ backend/routers/reports.py             |  95 [32m++++[m[31m-[m
+ backend/sla_engine.py                  |   8 [32m+[m[31m-[m
+ frontend/src/App.jsx                   |   4 [32m+[m[31m-[m
+ frontend/src/components/Sidebar.jsx    |   4 [32m+[m[31m-[m
+ frontend/src/pages/Dashboard.jsx       |   2 [32m+[m[31m-[m
+ frontend/src/pages/DataManagement.jsx  | 336 [31m---------------[m
+ frontend/src/pages/EmailAutomation.jsx | 109 [32m+++++[m
+ frontend/src/pages/Inventory.jsx       |  98 [32m+[m[31m----[m
+ frontend/src/pages/Orders.jsx          | 126 [32m+[m[31m-----[m
+ frontend/src/pages/Reports.jsx         |  21 [32m+[m[31m-[m
+ 14 files changed, 286 insertions(+), 1324 deletions(-)
