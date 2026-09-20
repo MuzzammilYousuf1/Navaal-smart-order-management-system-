@@ -606,6 +606,24 @@ export default function Inventory() {
             <h2 className="text-lg font-bold text-white">Restock {selectedProduct.name}</h2>
             <p className="text-xs text-brand-400">Current Stock: <span className="font-bold text-white">{selectedProduct.stock_qty} {selectedProduct.unit}s</span></p>
 
+            {(selectedProduct.name?.toLowerCase().includes("egg") || selectedProduct.category?.toLowerCase().includes("egg") || selectedProduct.category?.toLowerCase().includes("poultry") || selectedProduct.category === "General") && !selectedProduct.base_product_id && (
+              <div className="p-3 rounded-xl bg-amber-950/50 border border-amber-500/40 text-amber-300 text-xs flex items-start gap-2 shadow-sm">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
+                <div>
+                  <span className="font-bold">Notice:</span> When restocking the eggs main category, the inventory added should be in <strong>loose eggs</strong> (total individual units, not packs).
+                </div>
+              </div>
+            )}
+
+            {selectedProduct.base_product_id && selectedProduct.name?.toLowerCase().includes("egg") && (
+              <div className="p-3 rounded-xl bg-blue-950/50 border border-blue-500/40 text-blue-300 text-xs flex items-start gap-2 shadow-sm">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-blue-400 mt-0.5" />
+                <div>
+                  <span className="font-bold">Note:</span> Restocking packs automatically converts {selectedProduct.unit_multiplier || 1} loose eggs per pack into the main egg stock.
+                </div>
+              </div>
+            )}
+
             <form onSubmit={handleRestock} className="space-y-4">
               <div>
                 <label className="label">Quantity to Add</label>

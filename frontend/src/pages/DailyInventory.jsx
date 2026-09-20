@@ -90,7 +90,7 @@ export default function DailyInventory() {
 
       const [logsRes, summaryRes, prodsRes] = await Promise.all([
         api.get("/api/daily-inventory", { params }),
-        api.get("/api/daily-inventory/summary", { params: { start_date: start || undefined, end_date: end || undefined } }),
+        api.get("/api/daily-inventory/summary", { params: { start_date: start || undefined, end_date: end || undefined, category: filterCategory || undefined } }),
         api.get("/api/inventory/products"),
       ]);
 
@@ -337,7 +337,9 @@ export default function DailyInventory() {
           <div className="text-2xl font-extrabold text-white">
             {summary ? summary.total_stock_in_hand.toLocaleString() : 0}
           </div>
-          <p className="text-xs text-surface-400">Total Eggs in Warehouse</p>
+          <p className="text-xs text-surface-400">
+            {filterCategory ? `Total ${filterCategory} in Warehouse` : "Total Stock in Hand across main categories"}
+          </p>
         </div>
 
         {/* Total Added Stock */}
@@ -654,6 +656,15 @@ export default function DailyInventory() {
             </div>
 
             <form onSubmit={handleFormSubmit} className="p-6 space-y-4 text-xs">
+              {(formData.product_name?.toLowerCase().includes("egg") || formData.category_name?.toLowerCase().includes("egg") || formData.category_name?.toLowerCase().includes("poultry") || formData.category_name === "General") && (
+                <div className="p-3 rounded-xl bg-amber-950/50 border border-amber-500/40 text-amber-300 text-xs flex items-start gap-2 shadow-sm">
+                  <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
+                  <div>
+                    <span className="font-bold">Notice:</span> When restocking/adding inventory for eggs main category, the added stock should be entered in <strong>loose eggs</strong> (total individual units).
+                  </div>
+                </div>
+              )}
+
               {/* Date & Product Select */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
@@ -675,12 +686,26 @@ export default function DailyInventory() {
                     className="w-full bg-surface-800 border border-surface-700 text-white rounded-xl px-3 py-2 focus:border-brand-500 outline-none"
                   >
                     <option value="">-- Select Product --</option>
-                    {products.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} ({p.category || "General"})
-                      </option>
-                    ))}
+                    {/* Main / bulk base products — stock is logged here */}
+                    <optgroup label="── Main / Bulk Products (log stock here)">
+                      {products.filter((p) => !p.base_product_id).map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} ({p.category || "General"})
+                        </option>
+                      ))}
+                    </optgroup>
+                    {/* Sub-category / pack products — auto-converts to base units */}
+                    {products.some((p) => p.base_product_id) && (
+                      <optgroup label="── Pack / Sub-category Products (auto-converts to base units)">
+                        {products.filter((p) => p.base_product_id).map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name} ({p.category || "General"}) — ×{p.unit_multiplier || 1} units
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
                   </select>
+                  <p className="text-[11px] text-surface-500 mt-1">For eggs, always select the <strong className="text-amber-400">main/bulk product</strong> and enter quantity in loose eggs.</p>
                 </div>
               </div>
 

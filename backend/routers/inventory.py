@@ -302,7 +302,8 @@ def restock_product(
         from routers.daily_inventory import sync_daily_inventory_log
         unit_c = data.unit_price if (data.unit_price is not None and data.unit_price >= 0) else (p.unit_price or 0.0)
         qty_add = change if p.base_product_id else data.quantity
-        sync_daily_inventory_log(db, p, added_qty=qty_add, unit_cost=unit_c, note=data.note, created_by=current_user.name)
+        log_note = data.note or note
+        sync_daily_inventory_log(db, p, added_qty=qty_add, unit_cost=unit_c, note=log_note, created_by=current_user.name)
     except Exception:
         pass
 

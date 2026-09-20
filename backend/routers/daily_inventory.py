@@ -44,11 +44,10 @@ def sync_daily_inventory_log(
 ):
     """
     Auto-sync helper: Called when restock or spoilage is performed anywhere in the system.
-    Creates or updates a DailyInventoryLog record for the given product & date.
+    Creates a new DailyInventoryLog record for every stock addition / spoilage action
+    to ensure individual entries and user logs are never overwritten.
     """
     log_dt = target_date or datetime.utcnow()
-    day_start = log_dt.replace(hour=0, minute=0, second=0, microsecond=0)
-    day_end = day_start + timedelta(days=1)
 
     target_product = product
     if product.base_product_id:
@@ -56,42 +55,23 @@ def sync_daily_inventory_log(
         if parent:
             target_product = parent
 
-    log = db.query(models.DailyInventoryLog).filter(
-        models.DailyInventoryLog.product_id == target_product.id,
-        models.DailyInventoryLog.log_date >= day_start,
-        models.DailyInventoryLog.log_date < day_end,
-    ).first()
-
     cost = unit_cost if unit_cost > 0 else (target_product.unit_price or 0.0)
 
-    if not log:
-        log = models.DailyInventoryLog(
-            log_date=log_dt,
-            product_id=target_product.id,
-            product_name=target_product.name,
-            category_name=target_product.category or "General",
-            added_qty=added_qty,
-            unit_cost=cost,
-            total_cost=round(added_qty * cost, 2),
-            spoiled_qty=spoiled_qty,
-            broken_qty=broken_qty,
-            notes=note,
-            created_by=created_by or "System",
-        )
-        db.add(log)
-    else:
-        log.added_qty += added_qty
-        log.spoiled_qty += spoiled_qty
-        log.broken_qty += broken_qty
-        if cost > 0:
-            log.unit_cost = cost
-        log.total_cost = round(log.added_qty * log.unit_cost, 2)
-        if note:
-            log.notes = f"{log.notes} | {note}" if log.notes else note
-        if created_by:
-            log.created_by = created_by
-        log.updated_at = datetime.utcnow()
-
+    log = models.DailyInventoryLog(
+        log_date=log_dt,
+        product_id=target_product.id,
+        product_name=target_product.name,
+        category_name=target_product.category or "General",
+        added_qty=added_qty,
+        unit_cost=cost,
+        total_cost=round(added_qty * cost, 2),
+        spoiled_qty=spoiled_qty,
+        broken_qty=broken_qty,
+        notes=note,
+        created_by=created_by or "System",
+        created_at=datetime.utcnow(),
+    )
+    db.add(log)
     return log
 
 
@@ -134,12 +114,13 @@ def list_daily_inventory_logs(
 def get_daily_inventory_summary(
     start_date: Optional[str] = Query(None, description="YYYY-MM-DD"),
     end_date: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    category: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     admin_user: models.User = Depends(require_admin),
 ):
     """
     Get top summary KPIs for the Daily Inventory Report:
-    - Total eggs / stock in hand (sum of base products stock)
+    - Total eggs / stock in hand (sum of base products stock, filtered by category if supplied)
     - Total added stock (in selected date range or all-time)
     - Total purchase cost (PKR)
     - Total spoiled stock
@@ -147,10 +128,13 @@ def get_daily_inventory_summary(
     - Category-wise breakdown
     """
     # 1. Total Stock in Hand across base bulk products
-    base_products = db.query(models.Product).filter(
+    base_products_q = db.query(models.Product).filter(
         models.Product.is_active == True,
         models.Product.base_product_id.is_(None)
-    ).all()
+    )
+    if category:
+        base_products_q = base_products_q.filter(models.Product.category == category)
+    base_products = base_products_q.all()
     total_stock_in_hand = sum(p.stock_qty for p in base_products)
 
     # 2. Query Daily Logs for aggregated totals
@@ -167,6 +151,8 @@ def get_daily_inventory_summary(
             q = q.filter(models.DailyInventoryLog.log_date < et)
         except ValueError:
             pass
+    if category:
+        q = q.filter(models.DailyInventoryLog.category_name == category)
 
     logs = q.all()
 
@@ -268,12 +254,15 @@ def create_daily_inventory_log(
     # If linked to a product, adjust product stock and log StockMovement
     if prod:
         target_prod = prod
+        mult = 1.0
         if prod.base_product_id:
             parent = db.query(models.Product).filter(models.Product.id == prod.base_product_id).first()
             if parent:
                 target_prod = parent
+                mult = prod.unit_multiplier or 1.0
 
-        net_change = data.added_qty - data.spoiled_qty - data.broken_qty
+        raw_net = data.added_qty - data.spoiled_qty - data.broken_qty
+        net_change = round(raw_net * mult, 2)
         if net_change != 0:
             target_prod.stock_qty += net_change
             mv_type = "restock" if net_change > 0 else "adjustment"
@@ -282,7 +271,7 @@ def create_daily_inventory_log(
                 movement_type=mv_type,
                 quantity_change=net_change,
                 quantity_after=target_prod.stock_qty,
-                note=f"Daily Log Entry ({log_date.strftime('%Y-%m-%d')}) | Added: +{data.added_qty}, Spoiled: -{data.spoiled_qty}, Broken: -{data.broken_qty}",
+                note=f"Daily Log Entry ({log_date.strftime('%Y-%m-%d')}) | Added: +{data.added_qty * mult}, Spoiled: -{data.spoiled_qty * mult}, Broken: -{data.broken_qty * mult}",
                 created_by=admin_user.name,
                 created_at=datetime.utcnow(),
             ))
