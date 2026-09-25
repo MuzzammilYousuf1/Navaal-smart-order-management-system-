@@ -31,32 +31,43 @@ def _validate_rider_assignment(db: Session, rider_name: Optional[str]):
         raise HTTPException(status_code=400, detail="Select an active user account with the Rider role.")
 
 
-def _notify_b2c_dispatch(order: models.Order) -> None:
+def notify_n8n_order_event(order: models.Order, event_name: str) -> None:
     """
-    Fire-and-forget POST to n8n when a B2C order goes out for delivery.
-    Reads N8N_OFD_WEBHOOK_URL from the environment — if unset, skips silently.
-    Wrapped in try/except so a dead n8n instance never breaks the dispatch flow.
+    Fire-and-forget POST to n8n when an order status changes (RTS, Out For Delivery, Delivered, Cancelled).
+    Reads N8N_STATUS_WEBHOOK_URL or N8N_OFD_WEBHOOK_URL from environment.
+    Wrapped in try/except so a dead n8n instance never breaks the core flow.
     """
-    url = os.getenv("N8N_OFD_WEBHOOK_URL", "").strip()
+    url = os.getenv("N8N_STATUS_WEBHOOK_URL", "").strip()
+    if not url and event_name == "order_out_for_delivery":
+        url = os.getenv("N8N_OFD_WEBHOOK_URL", "").strip()
     if not url:
         return
     try:
         _requests.post(
             url,
             json={
-                "event": "order_out_for_delivery",
+                "event": event_name,
+                "order_id": order.id,
                 "order_number": order.order_number,
                 "customer_name": order.customer_name,
                 "customer_phone": order.customer_phone or "",
+                "status": order.status,
                 "rider_name": order.assigned_rider_name or "",
                 "total_amount": order.total_amount,
-                "channel": getattr(order, "channel", "b2c"),
+                "channel": getattr(order, "channel", "b2c") or "b2c",
+                "delivery_address": order.delivery_address or "",
             },
             timeout=5,
         )
-        logger.info("n8n OFD notify sent for %s", order.order_number)
+        logger.info("n8n %s notify sent for %s", event_name, order.order_number)
     except Exception as exc:
-        logger.warning("n8n OFD notify failed for %s: %s", order.order_number, exc)
+        logger.warning("n8n %s notify failed for %s: %s", event_name, order.order_number, exc)
+
+
+def _notify_b2c_dispatch(order: models.Order) -> None:
+    """Backward-compatible wrapper for dispatch notification."""
+    notify_n8n_order_event(order, "order_out_for_delivery")
+
 
 # Valid status transitions
 TRANSITIONS = {
@@ -670,9 +681,9 @@ def update_status(
     db.add(history)
     db.commit()
 
-    # ── WhatsApp dispatch notification (B2C only, best-effort) ───────────────
-    if data.new_status == "out_for_delivery" and getattr(order, "channel", "b2c") == "b2c":
-        _notify_b2c_dispatch(order)
+    # ── WhatsApp status notification (B2C only, best-effort) ───────────────
+    if getattr(order, "channel", "b2c") == "b2c":
+        notify_n8n_order_event(order, f"order_{data.new_status}")
 
     db.refresh(order)
     return order
