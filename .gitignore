@@ -34,3 +34,8 @@ backend/uploads/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local databases and customer uploads
+backend/*.db
+backend/*.db.bak-*
+backend/uploads/

@@ -1,7 +1,7 @@
 """
 n8n AI Integration & Webhook Router for Navaal-Organic-Foods Smart OrderFlow
 Establishes reliable connection between Cloud n8n AI Chatbot (WhatsApp Business) and FastAPI system.
-
+ 
 Endpoints:
   GET  /api/webhook/n8n/customer-info     - Find customer by phone number, check last orders & AI takeover status
   GET  /api/webhook/n8n/inventory         - Stock catalog & pricing tool for AI Agent
@@ -11,48 +11,60 @@ Endpoints:
   POST /api/webhook/n8n/toggle-ai-takeover - Flag customer for Human Takeover / mute AI replies
   POST /api/webhook/n8n/verify-payment     - Audit payment proof screenshot data & update order payment status
 """
-
+ 
 import re
 import os
 import json
 import logging
 from datetime import datetime, timedelta
 from typing import List, Optional
-
+ 
 from fastapi import APIRouter, Depends, HTTPException, Header, Query, UploadFile, File, Form, Body
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
 import uuid
-
+ 
 from database import get_db
 import models, schemas
-
+ 
 logger = logging.getLogger("webhook_n8n")
-
+ 
 router = APIRouter(prefix="/api/webhook/n8n", tags=["n8n-webhook"])
 attachments_router = APIRouter(prefix="/api/attachments", tags=["customer-attachments"])
-
-
+ 
+ 
 def verify_n8n_key(x_n8n_api_key: Optional[str] = Header(None)):
     """Validates API Key if configured in environment."""
     expected_key = os.getenv("N8N_API_KEY", "")
     if expected_key and x_n8n_api_key != expected_key:
         raise HTTPException(status_code=401, detail="Invalid or missing X-N8N-API-KEY header")
     return True
-
-
+ 
+ 
 def normalize_phone(phone: str) -> str:
-    """Normalizes phone numbers to standard digit string (e.g. +923001234567 -> 03001234567 or 923001234567)."""
+    """Normalizes phone numbers to standard digit string (handles WAHA JIDs e.g. 923001234567@c.us, +92300..., 0300...)."""
     if not phone:
         return ""
-    digits = re.sub(r"\D", "", phone)
+    phone_clean = phone.split("@")[0]
+    digits = re.sub(r"\D", "", phone_clean)
     if digits.startswith("92") and len(digits) == 12:
         return "0" + digits[2:]
     return digits
-
-
+ 
+ 
+def _phone_digits(col):
+    """Strip spaces, dashes and + so '+92 332 8299131' matches '923328299131'."""
+    return func.replace(func.replace(func.replace(col, " ", ""), "-", ""), "+", "")
+ 
+ 
+@router.get("/health")
+def n8n_webhook_health(_: bool = Depends(verify_n8n_key)):
+    """Simple ping endpoint for n8n to verify authentication and API status."""
+    return {"status": "ok", "service": "n8n-webhook-router", "time": datetime.utcnow().isoformat()}
+ 
+ 
 # ─── Customer Lookup ──────────────────────────────────────────────────────────
-
+ 
 @router.get("/customer-info")
 def get_customer_info(
     phone: str = Query(..., description="WhatsApp phone number"),
@@ -61,37 +73,52 @@ def get_customer_info(
 ):
     """
     Called by n8n to identify customer by WhatsApp number.
-    Returns address, order history, and human takeover status.
+    Returns address, order history, outstanding balance, and human takeover status.
     """
     clean = normalize_phone(phone)
     if not clean:
         raise HTTPException(status_code=400, detail="Invalid phone number")
-
+ 
     # Match by ending digits or exact phone
     customer = db.query(models.Customer).filter(
         or_(
             models.Customer.phone == phone,
             models.Customer.phone == clean,
-            models.Customer.phone.like(f"%{clean[-10:]}%")
+            _phone_digits(models.Customer.phone).like(f"%{clean[-10:]}%")
         )
     ).first()
-
+ 
     # Get last order for this phone
     last_order = db.query(models.Order).filter(
         or_(
             models.Order.customer_phone == phone,
             models.Order.customer_phone == clean,
-            models.Order.customer_phone.like(f"%{clean[-10:]}%")
+            _phone_digits(models.Order.customer_phone).like(f"%{clean[-10:]}%")
         )
     ).order_by(models.Order.created_at.desc()).first()
-
+ 
     if not customer and not last_order:
         return {
             "found": False,
             "message": "New customer profile. Ask for name and delivery address.",
-            "ai_disabled": False
+            "ai_disabled": False,
+            "outstanding_balance": 0.0
         }
-
+ 
+    # Calculate ledger balance if any entries exist
+    target_phone = customer.phone if customer else (last_order.customer_phone if last_order else clean)
+    clean_target = normalize_phone(target_phone)
+    ledger_entries = db.query(models.LedgerEntry).filter(
+        or_(
+            models.LedgerEntry.customer_phone == target_phone,
+            models.LedgerEntry.customer_phone == clean_target,
+            _phone_digits(models.LedgerEntry.customer_phone).like(f"%{clean_target[-10:]}%")
+        )
+    ).all()
+    total_debit = sum(e.amount for e in ledger_entries if e.entry_type == "debit")
+    total_credit = sum(e.amount for e in ledger_entries if e.entry_type == "credit")
+    outstanding_balance = round(total_debit - total_credit, 2)
+ 
     last_order_data = None
     if last_order:
         last_order_data = {
@@ -104,10 +131,10 @@ def get_customer_info(
                 for it in last_order.items
             ]
         }
-
+ 
     # Check ai_disabled attribute if column exists
     ai_disabled = getattr(customer, "ai_disabled", False) if customer else False
-
+ 
     return {
         "found": True,
         "customer_id": customer.id if customer else None,
@@ -115,14 +142,19 @@ def get_customer_info(
         "phone": customer.phone if customer else phone,
         "delivery_address": customer.delivery_address if customer else (last_order.delivery_address if last_order else ""),
         "city": customer.city if customer else (last_order.city if last_order else "Karachi"),
-        "total_orders": customer.order_count if customer else 1,
+        "total_orders": customer.order_count if customer else (1 if last_order else 0),
         "ai_disabled": ai_disabled,
+        "outstanding_balance": outstanding_balance,
+        "account_type": getattr(customer, "account_type", "b2c") if customer else "b2c",
+        "credit_limit": getattr(customer, "credit_limit", 0.0) if customer else 0.0,
+        "payment_terms": getattr(customer, "payment_terms", "cod") if customer else "cod",
         "last_order": last_order_data
     }
-
-
+ 
+ 
+ 
 # ─── Stock & Inventory Tool ───────────────────────────────────────────────────
-
+ 
 @router.get("/inventory")
 def get_inventory_catalog(
     q: Optional[str] = Query(None, description="Search product name/category"),
@@ -139,13 +171,13 @@ def get_inventory_catalog(
     )
     if q:
         query = query.filter(models.Product.name.ilike(f"%{q}%"))
-
+ 
     products = query.order_by(models.Product.name.asc()).all()
-
+ 
     catalog = []
     for p in products:
         multiplier = p.unit_multiplier or 1.0
-
+ 
         # Pack SKUs store stock on their BASE product, not on themselves.
         # Derive available pack count the same way the dashboard does:
         # available_packs = floor(base_product.stock_qty / unit_multiplier)
@@ -160,7 +192,7 @@ def get_inventory_catalog(
         else:
             # Standalone / bulk product — stock is stored directly on the record
             effective_stock = p.stock_qty
-
+ 
         catalog.append({
             "product_id": p.id,
             "name": p.name,
@@ -173,15 +205,15 @@ def get_inventory_catalog(
             "in_stock": effective_stock > 0,
             "low_stock": effective_stock <= p.low_stock_threshold
         })
-
+ 
     return {
         "total_products": len(catalog),
         "products": catalog
     }
-
-
+ 
+ 
 # ─── Order Creation Endpoint ──────────────────────────────────────────────────
-
+ 
 @router.post("/create-order")
 async def create_whatsapp_order(
     data: schemas.OrderCreate,
@@ -195,31 +227,31 @@ async def create_whatsapp_order(
     """
     if not data.customer_name or not data.customer_phone:
         raise HTTPException(status_code=400, detail="Customer name and phone are required")
-
+ 
     if not data.items:
         raise HTTPException(status_code=400, detail="Order items list cannot be empty")
-
+ 
     # Generate unique order number (e.g. NAV-20260819-XXXX)
     today_str = datetime.utcnow().strftime("%Y%m%d")
     count_today = db.query(models.Order).filter(models.Order.order_number.like(f"NAV-{today_str}-%")).count()
     order_number = f"NAV-{today_str}-{(count_today + 1):04d}"
-
+ 
     # Calculate total and check stock
     total_amount = 0.0
     order_items = []
     stock_warnings = []
-
+ 
     for item_in in data.items:
         item_total = item_in.quantity * item_in.unit_price
         total_amount += item_total
-
+ 
         # Attempt product lookup & stock deduction
         product = None
         if item_in.product_id:
             product = db.query(models.Product).filter(models.Product.id == item_in.product_id).first()
         if not product and item_in.product_name:
             product = db.query(models.Product).filter(models.Product.name.ilike(f"%{item_in.product_name}%")).first()
-
+ 
         if product:
             # Check stock
             required_qty = item_in.quantity * (product.unit_multiplier or 1.0)
@@ -227,11 +259,11 @@ async def create_whatsapp_order(
                 stock_warnings.append(
                     f"Warning: Low stock for {product.name}. Available: {product.stock_qty}, Requested: {required_qty}"
                 )
-
+ 
             # Deduct stock
             old_qty = product.stock_qty
             product.stock_qty -= required_qty
-
+ 
             # Log stock movement
             movement = models.StockMovement(
                 product_id=product.id,
@@ -242,7 +274,7 @@ async def create_whatsapp_order(
                 created_by="n8n-AI-Agent"
             )
             db.add(movement)
-
+ 
             order_items.append(
                 models.OrderItem(
                     product_id=product.id,
@@ -261,7 +293,20 @@ async def create_whatsapp_order(
                     total_price=item_total
                 )
             )
-
+ 
+    deliv_dt = None
+    if data.delivery_date:
+        if isinstance(data.delivery_date, str):
+            try:
+                deliv_dt = datetime.fromisoformat(data.delivery_date.replace("Z", "+00:00"))
+            except Exception:
+                try:
+                    deliv_dt = datetime.strptime(data.delivery_date, "%Y-%m-%d")
+                except Exception:
+                    deliv_dt = None
+        elif isinstance(data.delivery_date, datetime):
+            deliv_dt = data.delivery_date
+ 
     # Create Order
     new_order = models.Order(
         order_number=order_number,
@@ -270,7 +315,8 @@ async def create_whatsapp_order(
         delivery_address=data.delivery_address,
         city=data.city or "Karachi",
         location_url=data.location_url,
-        source="whatsapp",
+        source=data.source or "whatsapp",
+        channel=data.channel or "b2c",
         status="pending",
         priority=data.priority or "normal",
         payment_method=data.payment_method or "cod",
@@ -278,12 +324,13 @@ async def create_whatsapp_order(
         amount_received=data.amount_received or 0.0,
         notes=data.notes or "Created via n8n WhatsApp Chatbot",
         total_amount=total_amount,
+        delivery_date=deliv_dt,
         items=order_items
     )
-
+ 
     db.add(new_order)
     db.commit()
-
+ 
     # ── Post debit/credit ledger entries ──────────────────────────────────────
     try:
         from routers.ledger import post_ledger_entry
@@ -313,9 +360,9 @@ async def create_whatsapp_order(
         db.commit()
     except Exception as e:
         logger.warning(f"Failed to post ledger entries for WhatsApp order: {e}")
-
+ 
     db.refresh(new_order)
-
+ 
     # Record Status History
     status_entry = models.StatusHistory(
         order_id=new_order.id,
@@ -325,7 +372,7 @@ async def create_whatsapp_order(
         note="Order auto-created from WhatsApp conversation"
     )
     db.add(status_entry)
-
+ 
     # Upsert Address Book Customer
     from routers.customers import _upsert_customer_from_order
     items_summary = json.dumps([
@@ -334,7 +381,7 @@ async def create_whatsapp_order(
     ])
     _upsert_customer_from_order(db, new_order, items_summary)
     db.commit()
-
+ 
     # Trigger WebSocket Broadcast to Dashboard UI
     try:
         from main import manager
@@ -354,7 +401,7 @@ async def create_whatsapp_order(
         }))
     except Exception as e:
         logger.warning(f"Could not broadcast WS event: {e}")
-
+ 
     return {
         "status": "success",
         "order_id": new_order.id,
@@ -363,10 +410,10 @@ async def create_whatsapp_order(
         "stock_warnings": stock_warnings,
         "message": f"Order {new_order.order_number} created successfully and placed on dashboard!"
     }
-
-
+ 
+ 
 # ─── Order Status Tracking ────────────────────────────────────────────────────
-
+ 
 @router.get("/order-status")
 def get_order_status(
     phone: Optional[str] = Query(None, description="Customer phone number"),
@@ -380,7 +427,7 @@ def get_order_status(
     """
     if not phone and not order_number:
         raise HTTPException(status_code=400, detail="Provide either phone or order_number")
-
+ 
     query = db.query(models.Order)
     if order_number:
         query = query.filter(models.Order.order_number.ilike(order_number.strip()))
@@ -390,18 +437,18 @@ def get_order_status(
             or_(
                 models.Order.customer_phone == phone,
                 models.Order.customer_phone == clean,
-                models.Order.customer_phone.like(f"%{clean[-10:]}%")
+                _phone_digits(models.Order.customer_phone).like(f"%{clean[-10:]}%")
             )
         )
-
+ 
     order = query.order_by(models.Order.created_at.desc()).first()
-
+ 
     if not order:
         return {
             "found": False,
             "message": "No order found matching your query."
         }
-
+ 
     status_labels = {
         "pending": "Received & being prepared in warehouse",
         "ready_to_ship": "Packed & ready for dispatch",
@@ -409,7 +456,7 @@ def get_order_status(
         "delivered": "Successfully delivered to destination",
         "cancelled": "Order was cancelled"
     }
-
+ 
     return {
         "found": True,
         "order_number": order.order_number,
@@ -426,10 +473,10 @@ def get_order_status(
             for it in order.items
         ]
     }
-
-
+ 
+ 
 # ─── Automated Re-Order Reminders Endpoint ───────────────────────────────────
-
+ 
 @router.get("/reorder-reminders")
 def get_due_reorder_reminders(
     days: int = Query(7, ge=1, le=90, description="Inactivity days threshold"),
@@ -442,26 +489,26 @@ def get_due_reorder_reminders(
     enabling n8n to send automated WhatsApp re-order reminders.
     """
     cutoff_date = datetime.utcnow() - timedelta(days=days)
-
+ 
     # Subquery for most recent order date per phone
     subq = db.query(
         models.Order.customer_phone,
         func.max(models.Order.created_at).label("last_order_date")
     ).filter(models.Order.customer_phone != None).group_by(models.Order.customer_phone).subquery()
-
+ 
     # Join with customers
     query = db.query(models.Customer, subq.c.last_order_date).outerjoin(
         subq, models.Customer.phone == subq.c.customer_phone
     )
-
+ 
     customers = query.all()
-
+ 
     due_list = []
     for customer, last_date in customers:
         # Check if customer has ai_disabled set to True
         if getattr(customer, "ai_disabled", False):
             continue
-
+ 
         if not last_date or last_date <= cutoff_date:
             due_list.append({
                 "customer_id": customer.id,
@@ -473,16 +520,16 @@ def get_due_reorder_reminders(
                 "last_order_items": customer.last_items_json,
                 "order_count": customer.order_count
             })
-
+ 
     return {
         "cutoff_days": days,
         "total_due_customers": len(due_list),
         "due_customers": due_list
     }
-
-
+ 
+ 
 # ─── Human Supervision & AI Takeover Toggle ───────────────────────────────────
-
+ 
 @router.post("/toggle-ai-takeover")
 def toggle_ai_takeover(
     phone: str = Query(..., description="Customer phone number"),
@@ -500,20 +547,20 @@ def toggle_ai_takeover(
         or_(
             models.Customer.phone == phone,
             models.Customer.phone == clean,
-            models.Customer.phone.like(f"%{clean[-10:]}%")
+            _phone_digits(models.Customer.phone).like(f"%{clean[-10:]}%")
         )
     ).first()
-
+ 
     if not customer:
         raise HTTPException(status_code=404, detail="Customer record not found")
-
+ 
     customer.ai_disabled = disable_ai
     if hasattr(customer, "notes") and reason:
         existing = customer.notes or ""
         customer.notes = f"{existing}\n[{datetime.utcnow().strftime('%Y-%m-%d %H:%M')}] AI Takeover: {reason}".strip()
-
+ 
     db.commit()
-
+ 
     # Broadcast notification to dashboard
     try:
         from main import manager
@@ -527,7 +574,7 @@ def toggle_ai_takeover(
         }))
     except Exception as e:
         logger.warning(f"Could not broadcast WS event: {e}")
-
+ 
     return {
         "status": "success",
         "customer": customer.name,
@@ -535,10 +582,10 @@ def toggle_ai_takeover(
         "ai_disabled": disable_ai,
         "message": f"AI response status set to {'MUTED (Human Takeover Active)' if disable_ai else 'ACTIVE'}."
     }
-
-
+ 
+ 
 # ─── Payment Proof Verification ───────────────────────────────────────────────
-
+ 
 @router.post("/verify-payment")
 def verify_payment_proof(
     phone: str = Query(..., description="Customer phone number"),
@@ -562,11 +609,11 @@ def verify_payment_proof(
             or_(
                 models.Order.customer_phone == phone,
                 models.Order.customer_phone == clean,
-                models.Order.customer_phone.like(f"%{clean[-10:]}%")
+                _phone_digits(models.Order.customer_phone).like(f"%{clean[-10:]}%")
             ),
             models.Order.payment_status != "paid"
         ).order_by(models.Order.created_at.desc()).first()
-
+ 
     # ── Update CustomerAttachment if attachment_id is provided ──────────────────
     if attachment_id:
         try:
@@ -586,13 +633,13 @@ def verify_payment_proof(
                 db.commit()
         except Exception as e:
             logger.warning(f"Failed to update CustomerAttachment {attachment_id}: {e}")
-
+ 
     if not order:
         return {
             "status": "logged_without_order",
             "message": "Payment screenshot details logged, but no unpaid order was found for this phone."
         }
-
+ 
     if amount:
         order.amount_received = amount
     if amount and amount >= order.total_amount:
@@ -600,11 +647,11 @@ def verify_payment_proof(
         order.payment_received_at = datetime.utcnow()
     else:
         order.payment_status = "partial"
-
+ 
     if reference_no:
         note_text = f"Payment Ref: {reference_no} (Verified via AI Vision)"
         order.notes = f"{order.notes}\n{note_text}".strip() if order.notes else note_text
-
+ 
     # ── Post credit ledger entry ──────────────────────────────────────────────
     if amount:
         try:
@@ -621,9 +668,9 @@ def verify_payment_proof(
             )
         except Exception as e:
             logger.warning(f"Failed to post credit ledger entry for order {order.order_number}: {e}")
-
+ 
     db.commit()
-
+ 
     return {
         "status": "success",
         "order_number": order.order_number,
@@ -632,10 +679,10 @@ def verify_payment_proof(
         "payment_status": order.payment_status,
         "message": f"Payment proof recorded for order {order.order_number}."
     }
-
-
+ 
+ 
 # ─── Save / Update Customer Attachments (n8n initial uploads) ──────────────────
-
+ 
 @router.post("/save-attachment")
 def save_attachment(
     file: UploadFile = File(...),
@@ -652,26 +699,26 @@ def save_attachment(
     """
     active_phone = phone or phone_query
     active_order_id = order_id or order_id_query
-
+ 
     if not active_phone:
         raise HTTPException(status_code=400, detail="Missing customer phone number")
-
+ 
     # 1. Create uploads/attachments/ folder if not exists
     upload_dir = os.path.join("uploads", "attachments")
     os.makedirs(upload_dir, exist_ok=True)
-
+ 
     # 2. Generate non-colliding filename
     file_ext = os.path.splitext(file.filename)[1] or ".jpg"
     filename = f"{uuid.uuid4()}{file_ext}"
     file_path = os.path.join(upload_dir, filename)
-
+ 
     # 3. Save to disk
     try:
         with open(file_path, "wb") as buffer:
             buffer.write(file.file.read())
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to write attachment file: {e}")
-
+ 
     # 4. Create database record
     attachment = models.CustomerAttachment(
         customer_phone=active_phone,
@@ -683,21 +730,21 @@ def save_attachment(
     db.add(attachment)
     db.commit()
     db.refresh(attachment)
-
+ 
     return {
         "id": attachment.id,
         "status": attachment.status,
         "image_path": attachment.image_path
     }
-
-
+ 
+ 
 from pydantic import BaseModel
-
+ 
 class AttachmentUpdate(BaseModel):
     attachment_type: str
     notes: Optional[str] = None
-
-
+ 
+ 
 @attachments_router.patch("/{id}")
 def update_attachment(
     id: int,
@@ -711,17 +758,17 @@ def update_attachment(
     att = db.query(models.CustomerAttachment).filter(models.CustomerAttachment.id == id).first()
     if not att:
         raise HTTPException(status_code=404, detail="Attachment not found")
-
+ 
     att.attachment_type = data.attachment_type
     if data.notes is not None:
         att.notes = data.notes
-
+ 
     # Simple classification updates
     if data.attachment_type == "complaint":
         att.status = "pending_review"
     elif data.attachment_type == "other":
         att.status = "resolved"
-
+ 
     db.commit()
     db.refresh(att)
     return {
@@ -730,4 +777,3 @@ def update_attachment(
         "status": att.status,
         "notes": att.notes
     }
-
