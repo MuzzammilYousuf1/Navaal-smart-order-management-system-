@@ -253,24 +253,34 @@ async def create_whatsapp_order(
             product = db.query(models.Product).filter(models.Product.name.ilike(f"%{item_in.product_name}%")).first()
  
         if product:
+            # Pack SKUs (e.g. "Eggs 30 pack") keep their stock on the BASE product,
+            # exactly like the dashboard and the /inventory tool. Deduct from there.
+            stock_holder = product
+            if product.base_product_id:
+                base = db.query(models.Product).filter(
+                    models.Product.id == product.base_product_id
+                ).first()
+                if base:
+                    stock_holder = base
+ 
             # Check stock
             required_qty = item_in.quantity * (product.unit_multiplier or 1.0)
-            if product.stock_qty < required_qty:
+            if stock_holder.stock_qty < required_qty:
                 stock_warnings.append(
-                    f"Warning: Low stock for {product.name}. Available: {product.stock_qty}, Requested: {required_qty}"
+                    f"Warning: Low stock for {product.name}. Available: {stock_holder.stock_qty}, Requested: {required_qty}"
                 )
  
             # Deduct stock
-            old_qty = product.stock_qty
-            product.stock_qty -= required_qty
+            old_qty = stock_holder.stock_qty
+            stock_holder.stock_qty -= required_qty
  
             # Log stock movement
             movement = models.StockMovement(
-                product_id=product.id,
+                product_id=stock_holder.id,
                 movement_type="sale",
                 quantity_change=-required_qty,
-                quantity_after=product.stock_qty,
-                note=f"WhatsApp Order {order_number}",
+                quantity_after=stock_holder.stock_qty,
+                note=f"WhatsApp Order {order_number} - {item_in.quantity}x {product.name}",
                 created_by="n8n-AI-Agent"
             )
             db.add(movement)
