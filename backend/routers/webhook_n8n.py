@@ -478,10 +478,227 @@ def get_order_status(
         "assigned_rider": order.assigned_rider_name,
         "created_at": order.created_at.isoformat(),
         "delivered_at": order.delivered_at.isoformat() if order.delivered_at else None,
+        "delivery_date": order.delivery_date.date().isoformat() if order.delivery_date else None,
+        "delivery_address": order.delivery_address,
+        "notes": order.notes,
         "items": [
             {"product_name": it.product_name, "quantity": it.quantity, "total_price": it.total_price}
             for it in order.items
         ]
+    }
+ 
+ 
+# ─── Order Update (edit from WhatsApp) ────────────────────────────────────────
+ 
+from pydantic import BaseModel as _BaseModel
+ 
+ 
+class _UpdateItem(_BaseModel):
+    product_id: Optional[int] = None
+    product_name: Optional[str] = None
+    quantity: float
+ 
+ 
+class OrderUpdateRequest(_BaseModel):
+    order_number: str
+    phone: str                              # set by n8n from WhatsApp, never by the AI
+    delivery_date: Optional[str] = None     # YYYY-MM-DD
+    delivery_address: Optional[str] = None
+    city: Optional[str] = None
+    payment_method: Optional[str] = None
+    notes: Optional[str] = None             # appended, never overwrites
+    items: Optional[List[_UpdateItem]] = None  # full replacement list
+ 
+ 
+def _stock_holder(db: Session, product):
+    """Pack SKUs keep stock on their base product (same rule as create-order)."""
+    if product and product.base_product_id:
+        base = db.query(models.Product).filter(models.Product.id == product.base_product_id).first()
+        if base:
+            return base
+    return product
+ 
+ 
+def _parse_delivery_date(value):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except Exception:
+        try:
+            return datetime.strptime(str(value), "%Y-%m-%d")
+        except Exception:
+            return None
+ 
+ 
+@router.post("/update-order")
+async def update_whatsapp_order(
+    data: OrderUpdateRequest,
+    db: Session = Depends(get_db),
+    _: bool = Depends(verify_n8n_key),
+):
+    """
+    Lets the WhatsApp AI edit a customer's OWN order.
+    - Delivery date, address, city, payment method, notes: allowed while 'pending' or 'ready_to_ship'.
+    - Items/quantities: allowed only while 'pending'. Prices always come from the product table.
+    Stock and ledger are adjusted automatically.
+    """
+    order = db.query(models.Order).filter(
+        models.Order.order_number.ilike(data.order_number.strip())
+    ).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+ 
+    # Ownership check: the order must belong to the WhatsApp number that is asking
+    caller = normalize_phone(data.phone)
+    owner = normalize_phone(order.customer_phone or "")
+    if not caller or not owner or caller[-10:] != owner[-10:]:
+        raise HTTPException(status_code=403, detail="This order does not belong to this customer")
+ 
+    if order.status not in ("pending", "ready_to_ship"):
+        return {
+            "status": "not_allowed",
+            "message": f"Order is already '{order.status}' and can no longer be changed here. Please ask our team."
+        }
+ 
+    changes = []
+    stock_warnings = []
+    old_total = order.total_amount or 0.0
+ 
+    # ── Simple fields ─────────────────────────────────────────────────────────
+    if data.delivery_date:
+        dt = _parse_delivery_date(data.delivery_date)
+        if not dt:
+            raise HTTPException(status_code=400, detail="delivery_date must be YYYY-MM-DD")
+        order.delivery_date = dt
+        changes.append(f"delivery date -> {dt.date().isoformat()}")
+    if data.delivery_address:
+        order.delivery_address = data.delivery_address
+        changes.append("delivery address")
+    if data.city:
+        order.city = data.city
+        changes.append("city")
+    if data.payment_method:
+        order.payment_method = data.payment_method
+        changes.append(f"payment -> {data.payment_method}")
+ 
+    # ── Items (pending only) ──────────────────────────────────────────────────
+    if data.items is not None:
+        if order.status != "pending":
+            return {
+                "status": "not_allowed",
+                "message": "Items can only be changed before the order is packed. Please ask our team."
+            }
+        if not data.items:
+            raise HTTPException(status_code=400, detail="Items list cannot be empty - use the team for cancellations")
+ 
+        # 1) put old items back into stock
+        for it in list(order.items):
+            if it.product_id:
+                prod = db.query(models.Product).filter(models.Product.id == it.product_id).first()
+                holder = _stock_holder(db, prod)
+                if prod and holder:
+                    qty_back = it.quantity * (prod.unit_multiplier or 1.0)
+                    holder.stock_qty += qty_back
+                    db.add(models.StockMovement(
+                        product_id=holder.id, movement_type="sale",
+                        quantity_change=qty_back, quantity_after=holder.stock_qty,
+                        note=f"WhatsApp edit {order.order_number} - returned {it.quantity}x {prod.name}",
+                        created_by="n8n-AI-Agent",
+                    ))
+            db.delete(it)
+        db.flush()
+ 
+        # 2) add new items at current prices and deduct stock
+        new_total = 0.0
+        for item_in in data.items:
+            product = None
+            if item_in.product_id:
+                product = db.query(models.Product).filter(models.Product.id == item_in.product_id).first()
+            if not product and item_in.product_name:
+                product = db.query(models.Product).filter(models.Product.name.ilike(f"%{item_in.product_name}%")).first()
+            if not product:
+                raise HTTPException(status_code=400, detail=f"Product not found: {item_in.product_name or item_in.product_id}")
+ 
+            unit_price = product.unit_price
+            line_total = item_in.quantity * unit_price
+            new_total += line_total
+ 
+            holder = _stock_holder(db, product)
+            required = item_in.quantity * (product.unit_multiplier or 1.0)
+            if holder.stock_qty < required:
+                stock_warnings.append(f"Low stock for {product.name}. Available: {holder.stock_qty}, Requested: {required}")
+            holder.stock_qty -= required
+            db.add(models.StockMovement(
+                product_id=holder.id, movement_type="sale",
+                quantity_change=-required, quantity_after=holder.stock_qty,
+                note=f"WhatsApp edit {order.order_number} - {item_in.quantity}x {product.name}",
+                created_by="n8n-AI-Agent",
+            ))
+            order.items.append(models.OrderItem(
+                product_id=product.id, product_name=product.name,
+                quantity=item_in.quantity, unit_price=unit_price, total_price=line_total,
+            ))
+ 
+        order.total_amount = new_total
+        changes.append("items: " + ", ".join(f"{i.quantity:g}x {i.product_name or i.product_id}" for i in data.items))
+ 
+        # 3) ledger adjustment for the difference
+        diff = round(new_total - old_total, 2)
+        if diff != 0:
+            try:
+                from routers.ledger import post_ledger_entry
+                post_ledger_entry(
+                    db=db, phone=order.customer_phone,
+                    channel=getattr(order, "channel", "b2c") or "b2c",
+                    entry_type="debit" if diff > 0 else "credit",
+                    amount=abs(diff),
+                    description=f"WhatsApp order edit {order.order_number} (total {old_total:g} -> {new_total:g})",
+                    order_id=order.id, created_by="n8n-AI-Agent",
+                )
+            except Exception as e:
+                logger.warning(f"Ledger adjustment failed for {order.order_number}: {e}")
+ 
+    # ── Notes (appended) + audit trail ────────────────────────────────────────
+    stamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+    if data.notes:
+        changes.append("note added")
+    if not changes:
+        return {"status": "no_changes", "message": "Nothing to update."}
+ 
+    line = f"[{stamp} WhatsApp edit] " + "; ".join(changes) + (f" | Customer note: {data.notes}" if data.notes else "")
+    order.notes = f"{order.notes}\n{line}".strip() if order.notes else line
+ 
+    db.add(models.StatusHistory(
+        order_id=order.id, old_status=order.status, new_status=order.status,
+        changed_by="n8n-AI-Agent", note="Order edited from WhatsApp: " + "; ".join(changes),
+    ))
+    db.commit()
+    db.refresh(order)
+ 
+    try:
+        from main import manager
+        import asyncio
+        asyncio.create_task(manager.broadcast({
+            "event": "ORDER_UPDATED",
+            "source": "whatsapp",
+            "order": {"id": order.id, "order_number": order.order_number, "status": order.status,
+                      "total_amount": order.total_amount},
+        }))
+    except Exception as e:
+        logger.warning(f"Could not broadcast WS event: {e}")
+ 
+    return {
+        "status": "success",
+        "order_number": order.order_number,
+        "order_status": order.status,
+        "total_amount": order.total_amount,
+        "delivery_date": order.delivery_date.date().isoformat() if order.delivery_date else None,
+        "delivery_address": order.delivery_address,
+        "items": [{"product_name": i.product_name, "quantity": i.quantity, "unit_price": i.unit_price} for i in order.items],
+        "changes": changes,
+        "stock_warnings": stock_warnings,
+        "message": f"Order {order.order_number} updated: " + "; ".join(changes),
     }
  
  
