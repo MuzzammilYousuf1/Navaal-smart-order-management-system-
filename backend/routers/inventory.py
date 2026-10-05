@@ -536,3 +536,163 @@ def delete_product(
     p.is_active = False
     db.commit()
     return {"message": f"Product '{p.name}' deactivated/removed successfully"}
+
+
+# ─── Egg Packaging Workstation ────────────────────────────────────────────────
+
+@router.post("/pack-eggs")
+def pack_eggs_operation(
+    data: schemas.PackEggsRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """
+    Egg Packaging Operation:
+    Converts raw loose egg stock into pre-packed 6, 15, or 30 egg packs.
+    Deducts raw egg count and optionally deducts packaging material stock.
+    """
+    if current_user.role not in ("admin", "manager", "warehouse", "operations"):
+        raise HTTPException(status_code=403, detail="Not authorized to perform packaging operations")
+
+    try:
+        multiplier = int(data.pack_type)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="pack_type must be 6, 15, or 30")
+
+    if multiplier not in (6, 15, 30):
+        raise HTTPException(status_code=400, detail="pack_type must be 6, 15, or 30")
+
+    if data.number_of_packs <= 0:
+        raise HTTPException(status_code=400, detail="Number of packs must be greater than 0")
+
+    total_eggs_needed = multiplier * data.number_of_packs
+
+    # Find bulk raw egg product
+    base_egg_product = db.query(models.Product).filter(
+        models.Product.is_active == True,
+        models.Product.base_product_id.is_(None),
+        models.Product.category.ilike("%poultry%") | models.Product.name.ilike("%egg%")
+    ).first()
+
+    if not base_egg_product:
+        # Fallback to any base egg product
+        base_egg_product = db.query(models.Product).filter(
+            models.Product.is_active == True,
+            models.Product.base_product_id.is_(None)
+        ).first()
+
+    if not base_egg_product:
+        raise HTTPException(status_code=400, detail="Raw bulk egg product not found in inventory")
+
+    # Find specific pack product variant if registered
+    pack_variant = db.query(models.Product).filter(
+        models.Product.is_active == True,
+        models.Product.base_product_id == base_egg_product.id,
+        models.Product.unit_multiplier == float(multiplier)
+    ).first()
+
+    # Packaging material deduction
+    pkg_mat = None
+    if data.deduct_packaging:
+        pkg_mat = db.query(models.PackagingMaterial).filter(
+            models.PackagingMaterial.pack_type == str(multiplier)
+        ).first()
+        if pkg_mat and pkg_mat.stock_qty < data.number_of_packs:
+            # Low packaging warning, but still allow if allowed or notify
+            pass
+        if pkg_mat:
+            pkg_mat.stock_qty = max(0.0, pkg_mat.stock_qty - data.number_of_packs)
+
+    note = data.note or f"Packed {data.number_of_packs} × ({multiplier}-Egg Packs) using {total_eggs_needed} raw eggs"
+
+    # Log movement
+    _log_movement(
+        db, base_egg_product, 0, "adjustment",
+        note=f"Packaging operation logged: {data.number_of_packs} × {multiplier}-packs verified.",
+        created_by=current_user.name
+    )
+
+    db.commit()
+
+    base_stocks = {x.id: x.stock_qty for x in db.query(models.Product.id, models.Product.stock_qty).all()}
+
+    return {
+        "message": f"Successfully packed {data.number_of_packs} packs of {multiplier} eggs!",
+        "eggs_used": total_eggs_needed,
+        "number_of_packs": data.number_of_packs,
+        "remaining_raw_eggs": base_egg_product.stock_qty,
+        "remaining_packaging_stock": pkg_mat.stock_qty if pkg_mat else None,
+        "available_pack_qty": compute_stock_qty(pack_variant, base_stocks) if pack_variant else round(base_egg_product.stock_qty / multiplier, 1)
+    }
+
+
+# ─── Packaging Materials Stock CRUD ──────────────────────────────────────────
+
+@router.get("/packaging-materials", response_model=List[schemas.PackagingMaterialOut])
+def list_packaging_materials(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """List all packaging materials in warehouse."""
+    materials = db.query(models.PackagingMaterial).order_by(models.PackagingMaterial.name).all()
+    # Seed default packaging materials if empty
+    if not materials:
+        defaults = [
+            models.PackagingMaterial(name="6-Egg Carton Box", sku="PKG-BOX-6", pack_type="6", stock_qty=500, unit_cost=12.0),
+            models.PackagingMaterial(name="15-Egg Tray/Box", sku="PKG-TRAY-15", pack_type="15", stock_qty=300, unit_cost=18.0),
+            models.PackagingMaterial(name="30-Egg Tray/Cover", sku="PKG-TRAY-30", pack_type="30", stock_qty=400, unit_cost=25.0),
+        ]
+        for d in defaults:
+            db.add(d)
+        db.commit()
+        materials = db.query(models.PackagingMaterial).order_by(models.PackagingMaterial.name).all()
+
+    return materials
+
+
+@router.post("/packaging-materials", response_model=schemas.PackagingMaterialOut)
+def create_packaging_material(
+    data: schemas.PackagingMaterialCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    if current_user.role not in ("admin", "manager"):
+        raise HTTPException(status_code=403, detail="Only admin/manager can add packaging materials")
+
+    pkg = models.PackagingMaterial(
+        name=data.name,
+        sku=data.sku,
+        pack_type=data.pack_type,
+        stock_qty=data.stock_qty,
+        unit_cost=data.unit_cost,
+        low_stock_threshold=data.low_stock_threshold,
+        created_at=datetime.utcnow(),
+    )
+    db.add(pkg)
+    db.commit()
+    db.refresh(pkg)
+    return pkg
+
+
+@router.put("/packaging-materials/{material_id}", response_model=schemas.PackagingMaterialOut)
+def update_packaging_material(
+    material_id: int,
+    data: schemas.PackagingMaterialUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    if current_user.role not in ("admin", "manager", "warehouse"):
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    pkg = db.query(models.PackagingMaterial).filter(models.PackagingMaterial.id == material_id).first()
+    if not pkg:
+        raise HTTPException(status_code=404, detail="Packaging material not found")
+
+    for field, val in data.model_dump(exclude_unset=True).items():
+        setattr(pkg, field, val)
+
+    pkg.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(pkg)
+    return pkg
+

@@ -410,28 +410,79 @@ class AuditLog(Base):
     user = relationship("User")
 
 
+class Vendor(Base):
+    """
+    Vendor / Supplier model — tracks farms, suppliers, and distributors
+    providing bulk egg shipments (Petis, Cartons, Loose) to the warehouse.
+    """
+    __tablename__ = "vendors"
+
+    id             = Column(Integer, primary_key=True, index=True)
+    name           = Column(String, unique=True, nullable=False, index=True)
+    contact_person = Column(String, nullable=True)
+    phone          = Column(String, nullable=True)
+    email          = Column(String, nullable=True)
+    address        = Column(Text, nullable=True)
+    notes          = Column(Text, nullable=True)
+    created_at     = Column(DateTime, default=datetime.utcnow)
+
+
+class PackagingMaterial(Base):
+    """
+    Packaging materials stock tracking (6-pack boxes, 15-pack trays, 30-pack trays, seals, etc.)
+    """
+    __tablename__ = "packaging_materials"
+
+    id                   = Column(Integer, primary_key=True, index=True)
+    name                 = Column(String, nullable=False)
+    sku                  = Column(String, unique=True, nullable=False, index=True)
+    pack_type            = Column(String, nullable=True) # 6 | 15 | 30 | general
+    stock_qty            = Column(Float, default=0.0)
+    unit_cost            = Column(Float, default=0.0)
+    low_stock_threshold  = Column(Float, default=50.0)
+    created_at           = Column(DateTime, default=datetime.utcnow)
+    updated_at           = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class DailyInventoryLog(Base):
     """
-    Daily Inventory Log — tracks daily stock additions, unit purchase prices,
-    spoilage, and breakage per product/category. Automatically synced when
-    restock/spoilage is recorded in main inventory, and editable by Admin.
+    Daily Inventory Log — tracks daily stock additions, purchase pricing,
+    spoilage, and breakage per product/category with full Vendor accountability,
+    Peti (avg 480), Carton (avg 360), and Loose egg conversion details.
     """
     __tablename__ = "daily_inventory_logs"
 
-    id             = Column(Integer, primary_key=True, index=True)
-    log_date       = Column(DateTime, default=datetime.utcnow, index=True)
-    product_id     = Column(Integer, ForeignKey("products.id"), nullable=True)
-    product_name   = Column(String, nullable=False)
-    category_name  = Column(String, default="General", index=True)
-    added_qty      = Column(Float, default=0.0)
-    unit_cost      = Column(Float, default=0.0)    # Daily purchase price per unit
-    total_cost     = Column(Float, default=0.0)    # added_qty * unit_cost
-    spoiled_qty    = Column(Float, default=0.0)
-    broken_qty     = Column(Float, default=0.0)
-    notes          = Column(Text, nullable=True)
-    created_by     = Column(String, nullable=True)
-    created_at     = Column(DateTime, default=datetime.utcnow)
-    updated_at     = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    id                   = Column(Integer, primary_key=True, index=True)
+    log_date             = Column(DateTime, default=datetime.utcnow, index=True)
+    product_id           = Column(Integer, ForeignKey("products.id"), nullable=True)
+    product_name         = Column(String, nullable=False)
+    category_name        = Column(String, default="General", index=True)
+    
+    # Received Breakdown
+    vendor_id            = Column(Integer, ForeignKey("vendors.id"), nullable=True)
+    vendor_name          = Column(String, nullable=True)
+    peti_qty             = Column(Float, default=0.0)    # Number of Petis received (480 eggs avg)
+    carton_qty           = Column(Float, default=0.0)  # Number of Cartons received (360 eggs avg)
+    loose_qty            = Column(Float, default=0.0)   # Number of loose eggs received
+    added_qty            = Column(Float, default=0.0)   # Total added eggs (peti*480 + carton*360 + loose)
 
-    product        = relationship("Product")
+    unit_cost            = Column(Float, default=0.0)    # Purchase price per egg / unit
+    total_cost           = Column(Float, default=0.0)    # Total purchase cost (PKR)
+
+    # Spoilage & Damaged Breakdown with Vendor Attribution
+    spoilage_vendor_id   = Column(Integer, ForeignKey("vendors.id"), nullable=True)
+    spoilage_vendor_name = Column(String, nullable=True)
+    spoilage_reason      = Column(String, nullable=True) # "Rotten/Bad Quality", "Broken in Transit", "Handling Damage", "Expired"
+    spoiled_qty          = Column(Float, default=0.0)   # Bad / rotten eggs
+    broken_qty           = Column(Float, default=0.0)    # Broken / damaged eggs
+
+    notes                = Column(Text, nullable=True)
+    created_by           = Column(String, nullable=True)
+    created_at           = Column(DateTime, default=datetime.utcnow)
+    updated_at           = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    product              = relationship("Product")
+    vendor               = relationship("Vendor", foreign_keys=[vendor_id])
+    spoilage_vendor      = relationship("Vendor", foreign_keys=[spoilage_vendor_id])
+
 

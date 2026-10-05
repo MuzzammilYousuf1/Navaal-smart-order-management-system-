@@ -20,7 +20,7 @@ from jose import jwt
 from auth import SECRET_KEY, ALGORITHM
 import models
 from sla_engine import run_sla_check, set_ws_manager
-from routers import auth, orders, order_io, dashboard, reports, notifications, users, tracking, inventory, invoices, customers, subscriptions, tasks, chat, webhook_n8n, ledger, accounts, audit_log, daily_inventory
+from routers import auth, orders, order_io, dashboard, reports, notifications, users, tracking, inventory, invoices, customers, subscriptions, tasks, chat, webhook_n8n, ledger, accounts, audit_log, daily_inventory, vendors
 
 
 logging.basicConfig(level=logging.INFO)
@@ -180,10 +180,28 @@ async def lifespan(app: FastAPI):
                 connection.exec_driver_sql("ALTER TABLE ledger_entries ADD COLUMN payment_method VARCHAR")
             if "reference_no" not in ledger_columns:
                 connection.exec_driver_sql("ALTER TABLE ledger_entries ADD COLUMN reference_no VARCHAR")
-            if "notes" not in ledger_columns:
-                connection.exec_driver_sql("ALTER TABLE ledger_entries ADD COLUMN notes TEXT")
+        # 7. Migrate daily_inventory_logs table
+        if inspector.has_table("daily_inventory_logs"):
+            dil_columns = {col["name"] for col in inspector.get_columns("daily_inventory_logs")}
+            if "vendor_id" not in dil_columns:
+                connection.exec_driver_sql("ALTER TABLE daily_inventory_logs ADD COLUMN vendor_id INTEGER")
+            if "vendor_name" not in dil_columns:
+                connection.exec_driver_sql("ALTER TABLE daily_inventory_logs ADD COLUMN vendor_name VARCHAR")
+            if "peti_qty" not in dil_columns:
+                connection.exec_driver_sql("ALTER TABLE daily_inventory_logs ADD COLUMN peti_qty FLOAT DEFAULT 0")
+            if "carton_qty" not in dil_columns:
+                connection.exec_driver_sql("ALTER TABLE daily_inventory_logs ADD COLUMN carton_qty FLOAT DEFAULT 0")
+            if "loose_qty" not in dil_columns:
+                connection.exec_driver_sql("ALTER TABLE daily_inventory_logs ADD COLUMN loose_qty FLOAT DEFAULT 0")
+            if "spoilage_vendor_id" not in dil_columns:
+                connection.exec_driver_sql("ALTER TABLE daily_inventory_logs ADD COLUMN spoilage_vendor_id INTEGER")
+            if "spoilage_vendor_name" not in dil_columns:
+                connection.exec_driver_sql("ALTER TABLE daily_inventory_logs ADD COLUMN spoilage_vendor_name VARCHAR")
+            if "spoilage_reason" not in dil_columns:
+                connection.exec_driver_sql("ALTER TABLE daily_inventory_logs ADD COLUMN spoilage_reason VARCHAR")
 
     logger.info("Database tables created/verified ✓")
+
 
     # Automatically sync PostgreSQL primary key sequences to MAX(id) + 1
     from database import sync_db_sequences
@@ -340,6 +358,7 @@ app.include_router(ledger.router)
 app.include_router(accounts.router)
 app.include_router(audit_log.router)
 app.include_router(daily_inventory.router)
+app.include_router(vendors.router)
 
 
 

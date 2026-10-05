@@ -70,8 +70,9 @@ nano .env
 | `APP_DOMAIN` | ✅ | Frontend domain, e.g. `orders.navaalfood.com` |
 | `N8N_DOMAIN` | ✅ | n8n domain, e.g. `n8n.navaalfood.com` |
 | `SOF_SECRET_KEY` | ✅ | JWT signing secret — `openssl rand -hex 32` |
-| `N8N_API_KEY` | ✅ | Shared secret for n8n → backend webhook auth |
-| `N8N_OFD_WEBHOOK_URL` | ✅ | n8n webhook URL for Out-For-Delivery trigger |
+| `N8N_API_KEY` | ✅ | Shared secret for n8n → backend webhook auth (send header `X-N8N-API-KEY`) |
+| `N8N_STATUS_WEBHOOK_URL` | ⚠️ | n8n webhook URL for order status updates (RTS, OFD, Delivered, Cancelled) |
+| `N8N_OFD_WEBHOOK_URL` | ⚠️ | Fallback n8n webhook URL for Out-For-Delivery trigger |
 | `N8N_ENCRYPTION_KEY` | ✅ | n8n credential encryption key — `openssl rand -hex 32` |
 | `CORS_ORIGINS` | ✅ | Comma-separated allowed frontend origins |
 | `SMTP_HOST` | ✅ | SMTP server hostname (e.g. `smtp.gmail.com`) |
@@ -230,3 +231,49 @@ n8n and the backend share the `sof-network` Docker bridge. Inside n8n workflows,
 gunzip -c /opt/sof/backups/sof_sof_production_YYYYMMDD_HHMMSS.sql.gz \
   | docker compose exec -T db psql -U navaal_admin -d sof_production
 ```
+
+---
+
+## n8n & WhatsApp (WAHA / WABA) Integration Guide
+
+### 1. Connecting n8n to Backend (Docker internal network)
+Inside n8n HTTP Request nodes, set the Base URL to:
+- **`http://backend:8000`** (using internal Docker network)
+- Header: `X-N8N-API-KEY` = `${N8N_API_KEY}`
+
+### 2. Available FastAPI Webhook Endpoints for n8n
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/webhook/n8n/health` | Ping endpoint to verify n8n key and API status |
+| `GET` | `/api/webhook/n8n/customer-info?phone=...` | Look up customer, last order, ledger balance & AI takeover status |
+| `GET` | `/api/webhook/n8n/inventory?q=...` | Stock catalog & unit pricing for AI agent tool calling |
+| `POST` | `/api/webhook/n8n/create-order` | Create order, deduct inventory, upsert customer & update dashboard |
+| `GET` | `/api/webhook/n8n/order-status?phone=...` | Track order progress, rider info & delivery status |
+| `GET` | `/api/webhook/n8n/reorder-reminders?days=7` | List repeat customers due for weekly re-orders |
+| `POST` | `/api/webhook/n8n/toggle-ai-takeover` | Mute AI auto-reply for human agent takeover |
+| `POST` | `/api/webhook/n8n/verify-payment` | Process Vision payment screenshot verification |
+| `POST` | `/api/webhook/n8n/save-attachment` | Save raw image/receipt uploaded by customer |
+| `GET` | `/api/subscriptions/n8n/due` | List recurring subscriptions due for delivery today |
+
+### 3. Outbound WhatsApp Notifications (Backend → n8n → WAHA/WABA)
+When order status changes in FastAPI, the backend sends a POST payload to `N8N_STATUS_WEBHOOK_URL` (or `N8N_OFD_WEBHOOK_URL` for dispatch) containing:
+```json
+{
+  "event": "order_out_for_delivery",
+  "order_id": 42,
+  "order_number": "NAV-20260924-0001",
+  "customer_name": "Ali Hassan",
+  "customer_phone": "03001234567",
+  "status": "out_for_delivery",
+  "rider_name": "Tariq",
+  "total_amount": 1450.0,
+  "channel": "b2c",
+  "delivery_address": "Block 3, PECHS, Karachi"
+}
+```
+
+### 4. WAHA (WhatsApp HTTP API) vs WABA (Meta Cloud API)
+- **WAHA Setup**: Enable the `waha` container block in `docker-compose.yml` to run self-hosted WhatsApp Web session. Point n8n to `http://waha:3000/api/sendText`.
+- **WABA Transition**: Connect n8n directly to WhatsApp Cloud API nodes (Meta API). The FastAPI endpoints listed above remain **identical** for both WAHA and WABA!
+

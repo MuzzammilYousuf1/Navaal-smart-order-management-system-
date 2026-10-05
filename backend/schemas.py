@@ -568,14 +568,95 @@ class LedgerStatement(BaseModel):
 
 # ─── Daily Inventory Log & Stock Reports ─────────────────────────────────────
 
+# ─── Vendor / Supplier ──────────────────────────────────────────────────────
+
+class VendorCreate(BaseModel):
+    name: str
+    contact_person: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    address: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class VendorUpdate(BaseModel):
+    name: Optional[str] = None
+    contact_person: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    address: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class VendorOut(BaseModel):
+    id: int
+    name: str
+    contact_person: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    address: Optional[str] = None
+    notes: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ─── Packaging Material ──────────────────────────────────────────────────────
+
+class PackagingMaterialCreate(BaseModel):
+    name: str
+    sku: str
+    pack_type: Optional[str] = "general" # 6 | 15 | 30 | general
+    stock_qty: float = 0.0
+    unit_cost: float = 0.0
+    low_stock_threshold: float = 50.0
+
+
+class PackagingMaterialUpdate(BaseModel):
+    name: Optional[str] = None
+    pack_type: Optional[str] = None
+    stock_qty: Optional[float] = None
+    unit_cost: Optional[float] = None
+    low_stock_threshold: Optional[float] = None
+
+
+class PackagingMaterialOut(BaseModel):
+    id: int
+    name: str
+    sku: str
+    pack_type: Optional[str]
+    stock_qty: float
+    unit_cost: float
+    low_stock_threshold: float
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ─── Daily Inventory Log & Stock Reports ─────────────────────────────────────
+
 class DailyInventoryLogCreate(BaseModel):
     log_date: Optional[datetime] = None
     product_id: Optional[int] = None
     product_name: str
     category_name: Optional[str] = "General"
-    added_qty: float = 0.0
+    
+    vendor_id: Optional[int] = None
+    vendor_name: Optional[str] = None
+    peti_qty: float = 0.0      # Number of Petis (480 eggs avg)
+    carton_qty: float = 0.0    # Number of Cartons (360 eggs avg)
+    loose_qty: float = 0.0     # Loose eggs count
+    added_qty: float = 0.0     # If 0, auto computed from peti*480 + carton*360 + loose
+
     unit_cost: float = 0.0
     total_cost: Optional[float] = None
+
+    spoilage_vendor_id: Optional[int] = None
+    spoilage_vendor_name: Optional[str] = None
+    spoilage_reason: Optional[str] = None # e.g. Rotten, Damaged in Transit, Expired
     spoiled_qty: float = 0.0
     broken_qty: float = 0.0
     notes: Optional[str] = None
@@ -583,9 +664,17 @@ class DailyInventoryLogCreate(BaseModel):
 
 class DailyInventoryLogUpdate(BaseModel):
     log_date: Optional[datetime] = None
+    vendor_id: Optional[int] = None
+    vendor_name: Optional[str] = None
+    peti_qty: Optional[float] = None
+    carton_qty: Optional[float] = None
+    loose_qty: Optional[float] = None
     added_qty: Optional[float] = None
     unit_cost: Optional[float] = None
     total_cost: Optional[float] = None
+    spoilage_vendor_id: Optional[int] = None
+    spoilage_vendor_name: Optional[str] = None
+    spoilage_reason: Optional[str] = None
     spoiled_qty: Optional[float] = None
     broken_qty: Optional[float] = None
     notes: Optional[str] = None
@@ -597,11 +686,23 @@ class DailyInventoryLogOut(BaseModel):
     product_id: Optional[int]
     product_name: str
     category_name: str
+    
+    vendor_id: Optional[int] = None
+    vendor_name: Optional[str] = None
+    peti_qty: float = 0.0
+    carton_qty: float = 0.0
+    loose_qty: float = 0.0
     added_qty: float
+    
     unit_cost: float
     total_cost: float
+
+    spoilage_vendor_id: Optional[int] = None
+    spoilage_vendor_name: Optional[str] = None
+    spoilage_reason: Optional[str] = None
     spoiled_qty: float
     broken_qty: float
+
     notes: Optional[str]
     created_by: Optional[str]
     created_at: datetime
@@ -620,11 +721,37 @@ class CategoryStockSummary(BaseModel):
     total_broken: float
 
 
+class VendorAccountabilityItem(BaseModel):
+    vendor_id: Optional[int]
+    vendor_name: str
+    total_petis: float
+    total_cartons: float
+    total_loose: float
+    total_eggs_received: float
+    total_cost_pkr: float
+    total_spoiled_eggs: float
+    total_broken_eggs: float
+    total_loss_pkr: float
+    spoilage_rate_pct: float
+
+
 class DailyInventorySummaryOut(BaseModel):
-    total_stock_in_hand: float
+    total_stock_in_hand: float      # In raw eggs
+    total_petis_in_hand: float      # raw eggs / 480
+    total_cartons_in_hand: float    # raw eggs / 360
     total_added: float
     total_purchase_cost: float
     total_spoiled: float
     total_broken: float
+    total_loss_pkr: float
     categories: List[CategoryStockSummary]
+    vendor_accountability: List[VendorAccountabilityItem] = []
+
+
+class PackEggsRequest(BaseModel):
+    pack_type: str                  # "6" | "15" | "30"
+    number_of_packs: int            # Quantity of finished packs to create
+    deduct_packaging: bool = True   # Deduct packaging materials stock
+    note: Optional[str] = None
+
 
