@@ -193,6 +193,8 @@ async def lifespan(app: FastAPI):
                 connection.exec_driver_sql("ALTER TABLE daily_inventory_logs ADD COLUMN carton_qty FLOAT DEFAULT 0")
             if "loose_qty" not in dil_columns:
                 connection.exec_driver_sql("ALTER TABLE daily_inventory_logs ADD COLUMN loose_qty FLOAT DEFAULT 0")
+            if "total_cost" not in dil_columns:
+                connection.exec_driver_sql("ALTER TABLE daily_inventory_logs ADD COLUMN total_cost FLOAT DEFAULT 0")
             if "spoilage_vendor_id" not in dil_columns:
                 connection.exec_driver_sql("ALTER TABLE daily_inventory_logs ADD COLUMN spoilage_vendor_id INTEGER")
             if "spoilage_vendor_name" not in dil_columns:
