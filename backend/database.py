@@ -9,9 +9,16 @@ DEFAULT_DB_URL = f"sqlite:///{os.path.join(BASE_DIR, 'sof.db')}"
 # Retrieve the database URL from the environment, defaulting to the local SQLite database
 DATABASE_URL = os.getenv("DATABASE_URL", DEFAULT_DB_URL)
 
-# Normalize the PostgreSQL scheme prefix
+# Normalize the PostgreSQL scheme prefix.
+# Always force psycopg2 dialect to avoid "ModuleNotFoundError: No module named 'psycopg'"
+# which occurs when SQLAlchemy defaults to psycopg3 on newer versions.
 if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg2://", 1)
+elif DATABASE_URL.startswith("postgresql://") and "+psycopg" not in DATABASE_URL:
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg2://", 1)
+elif DATABASE_URL.startswith("postgresql+psycopg://"):
+    # Downgrade psycopg3 dialect to psycopg2
+    DATABASE_URL = DATABASE_URL.replace("postgresql+psycopg://", "postgresql+psycopg2://", 1)
 
 # Apply SQLite-specific check-same-thread argument only when running SQLite
 connect_args = {}
